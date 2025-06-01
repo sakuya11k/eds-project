@@ -1,32 +1,40 @@
 'use client'
 
 import React, { useEffect, useState, FormEvent } from 'react'
-import { useAuth } from '@/context/AuthContext'
+import { useAuth } from '@/context/AuthContext' //
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import axios from 'axios'
-import { supabase } from '@/lib/supabaseClient'
+import { supabase } from '@/lib/supabaseClient' //
 import { toast } from 'react-hot-toast'
 
-// プロファイルの型定義 (バックエンドからの応答、preferred_ai_model を含む)
+// プロファイルの型定義 (バックエンドからの応答、X APIキー関連を含む)
 type Profile = {
   id?: string;
   username: string | null;
   website: string | null;
-  avatar_url: string | null; // 今回は扱いませんが、型としては存在
+  avatar_url: string | null;
   brand_voice: string | null;
   target_persona: string | null;
-  preferred_ai_model: string | null; // 追加
+  preferred_ai_model: string | null;
+  x_api_key: string | null;
+  x_api_secret_key: string | null;
+  x_access_token: string | null;
+  x_access_token_secret: string | null;
   updated_at?: string;
 }
 
-// フォームデータの型 (preferred_ai_model を含む)
+// フォームデータの型 (X APIキー関連を含む)
 type ProfileFormData = {
   username: string;
   website: string;
   brand_voice: string;
   target_persona: string;
-  preferred_ai_model: string; // 追加 (ラジオボタンで選択するので string でOK)
+  preferred_ai_model: string;
+  x_api_key: string;
+  x_api_secret_key: string;
+  x_access_token: string;
+  x_access_token_secret: string;
 }
 
 const initialFormData: ProfileFormData = {
@@ -34,59 +42,61 @@ const initialFormData: ProfileFormData = {
   website: '',
   brand_voice: '',
   target_persona: '',
-  preferred_ai_model: 'gemini-1.5-flash-latest', // デフォルト値をFlashに設定
+  preferred_ai_model: 'gemini-1.5-flash-latest',
+  x_api_key: '',
+  x_api_secret_key: '',
+  x_access_token: '',
+  x_access_token_secret: '',
 }
 
 // AIモデルの選択肢
 const aiModelOptions = [
   { value: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash (高速・標準)' },
   { value: 'gemini-1.5-pro-latest', label: 'Gemini 1.5 Pro (高性能・高品質)' },
-  // 必要に応じて他のモデルも追加可能
 ]
 
 export default function MyPage() {
-  const { user, loading: authLoading, signOut } = useAuth()
+  const { user, loading: authLoading, signOut } = useAuth() //
   const router = useRouter()
 
-  // profile はDBから取得した生のProfileデータ (nullを含む可能性がある)
-  // formData はフォーム表示・編集用のデータ (nullを空文字などに変換)
-  const [profile, setProfile] = useState<Profile | null>(null) 
+  const [profile, setProfile] = useState<Profile | null>(null)
   const [formData, setFormData] = useState<ProfileFormData>(initialFormData)
-  const [apiLoading, setApiLoading] = useState(true) // プロフィール取得時のローディング
-  const [isSubmitting, setIsSubmitting] = useState(false) // フォーム送信時のローディング
+  const [apiLoading, setApiLoading] = useState(true)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [apiError, setApiError] = useState<string | null>(null)
 
-  // 認証チェックとリダイレクト
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/login')
     }
   }, [user, authLoading, router])
 
-  // 初期プロファイルデータの取得
   useEffect(() => {
     const fetchProfile = async () => {
       if (user && !authLoading) {
         setApiLoading(true)
         setApiError(null)
         try {
-          const { data: { session } } = await supabase.auth.getSession()
+          const { data: { session } } = await supabase.auth.getSession() //
           if (!session) throw new Error("セッションが見つかりません。")
 
           const response = await axios.get(
-            'http://localhost:5001/api/v1/profile',
+            'http://localhost:5001/api/v1/profile', //
             { headers: { Authorization: `Bearer ${session.access_token}` } }
           )
           const fetchedProfile: Profile = response.data
-          setProfile(fetchedProfile) // 生のデータをセット
+          setProfile(fetchedProfile)
           
-          // フォームデータに初期値を設定
           setFormData({
             username: fetchedProfile.username || '',
             website: fetchedProfile.website || '',
             brand_voice: fetchedProfile.brand_voice || '',
             target_persona: fetchedProfile.target_persona || '',
-            preferred_ai_model: fetchedProfile.preferred_ai_model || 'gemini-1.5-flash-latest', // DBに未設定ならFlashをデフォルトに
+            preferred_ai_model: fetchedProfile.preferred_ai_model || 'gemini-1.5-flash-latest',
+            x_api_key: fetchedProfile.x_api_key || '',
+            x_api_secret_key: fetchedProfile.x_api_secret_key || '',
+            x_access_token: fetchedProfile.x_access_token || '',
+            x_access_token_secret: fetchedProfile.x_access_token_secret || '',
           })
         } catch (error: any) {
           console.error('プロファイル取得エラー (MyPage):', error)
@@ -97,8 +107,6 @@ export default function MyPage() {
             await signOut()
             router.push('/login')
           } else if (axios.isAxiosError(error) && error.response?.status === 404) {
-            // プロファイルが存在しない場合 (新規ユーザーでトリガーがまだ動いていないなど)
-            // initialFormData が使われるので、特に何もしなくてもフォームは空になる
             toast.error("プロフィールデータが見つかりません。新規作成扱いになります。");
           }
         } finally {
@@ -125,32 +133,38 @@ export default function MyPage() {
     setIsSubmitting(true)
     setApiError(null)
     try {
-      const { data: { session } } = await supabase.auth.getSession()
+      const { data: { session } } = await supabase.auth.getSession() //
       if (!session) throw new Error("セッションが見つかりません。")
 
-      // 送信するペイロードをProfile型に合わせる（空文字はnullに変換）
       const payload: Partial<Profile> = {
         username: formData.username.trim() === '' ? null : formData.username.trim(),
         website: formData.website.trim() === '' ? null : formData.website.trim(),
         brand_voice: formData.brand_voice.trim() === '' ? null : formData.brand_voice.trim(),
         target_persona: formData.target_persona.trim() === '' ? null : formData.target_persona.trim(),
-        preferred_ai_model: formData.preferred_ai_model, // これは必須なのでそのまま
+        preferred_ai_model: formData.preferred_ai_model,
+        x_api_key: formData.x_api_key.trim() === '' ? null : formData.x_api_key.trim(),
+        x_api_secret_key: formData.x_api_secret_key.trim() === '' ? null : formData.x_api_secret_key.trim(),
+        x_access_token: formData.x_access_token.trim() === '' ? null : formData.x_access_token.trim(),
+        x_access_token_secret: formData.x_access_token_secret.trim() === '' ? null : formData.x_access_token_secret.trim(),
       };
 
       const response = await axios.put(
-        'http://localhost:5001/api/v1/profile',
+        'http://localhost:5001/api/v1/profile', //
         payload,
         { headers: { Authorization: `Bearer ${session.access_token}` } }
       )
       const updatedProfile: Profile = response.data;
-      setProfile(updatedProfile) // 更新後のプロファイルでローカルを更新
-      // フォームデータも更新後のデータで再設定
+      setProfile(updatedProfile)
       setFormData({
         username: updatedProfile.username || '',
         website: updatedProfile.website || '',
         brand_voice: updatedProfile.brand_voice || '',
         target_persona: updatedProfile.target_persona || '',
         preferred_ai_model: updatedProfile.preferred_ai_model || 'gemini-1.5-flash-latest',
+        x_api_key: updatedProfile.x_api_key || '',
+        x_api_secret_key: updatedProfile.x_api_secret_key || '',
+        x_access_token: updatedProfile.x_access_token || '',
+        x_access_token_secret: updatedProfile.x_access_token_secret || '',
       });
       toast.success('プロフィールを更新しました！')
     } catch (error: any) {
@@ -249,7 +263,6 @@ export default function MyPage() {
           />
         </div>
 
-        {/* --- AIモデル選択セクション --- */}
         <fieldset className="pt-4">
           <legend className="text-base font-semibold text-gray-900 mb-3">AIモデル設定</legend>
           <p className="text-sm text-gray-500 mb-4">
@@ -261,7 +274,7 @@ export default function MyPage() {
               <div key={option.value} className="flex items-center">
                 <input
                   id={option.value}
-                  name="preferred_ai_model" // ラジオボタンのname属性は共通にする
+                  name="preferred_ai_model"
                   type="radio"
                   value={option.value}
                   checked={formData.preferred_ai_model === option.value}
@@ -275,7 +288,78 @@ export default function MyPage() {
             ))}
           </div>
         </fieldset>
-        {/* --- ここまでAIモデル選択セクション --- */}
+        
+        <fieldset className="pt-6 mt-6 border-t border-gray-200">
+            <legend className="text-base font-semibold text-gray-900 mb-3">X (旧Twitter) API連携設定</legend>
+            <p className="text-sm text-gray-500 mb-4">
+                ツイートの自動投稿機能を利用するには、X Developer Platformで取得したAPIキーとアクセストークンを設定してください。
+                <Link href="https://developer.twitter.com/en/portal/projects-and-apps" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 ml-1">
+                    (X Developer Portal)
+                </Link>
+            </p>
+            <div className="space-y-6">
+                <div>
+                    <label htmlFor="x_api_key" className="block text-sm font-medium text-gray-700">
+                        API Key (Consumer Key)
+                    </label>
+                    <input
+                        type="password"
+                        name="x_api_key"
+                        id="x_api_key"
+                        value={formData.x_api_key}
+                        onChange={handleChange}
+                        placeholder="X API Keyを入力"
+                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                        autoComplete="off" 
+                    />
+                </div>
+                <div>
+                    <label htmlFor="x_api_secret_key" className="block text-sm font-medium text-gray-700">
+                        API Key Secret (Consumer Secret)
+                    </label>
+                    <input
+                        type="password"
+                        name="x_api_secret_key"
+                        id="x_api_secret_key"
+                        value={formData.x_api_secret_key}
+                        onChange={handleChange}
+                        placeholder="X API Key Secretを入力"
+                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                        autoComplete="off"
+                    />
+                </div>
+                <div>
+                    <label htmlFor="x_access_token" className="block text-sm font-medium text-gray-700">
+                        Access Token
+                    </label>
+                    <input
+                        type="password"
+                        name="x_access_token"
+                        id="x_access_token"
+                        value={formData.x_access_token}
+                        onChange={handleChange}
+                        placeholder="X Access Tokenを入力"
+                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                        autoComplete="off"
+                    />
+                </div>
+                <div>
+                    <label htmlFor="x_access_token_secret" className="block text-sm font-medium text-gray-700">
+                        Access Token Secret
+                    </label>
+                    <input
+                        type="password"
+                        name="x_access_token_secret"
+                        id="x_access_token_secret"
+                        value={formData.x_access_token_secret}
+                        onChange={handleChange}
+                        placeholder="X Access Token Secretを入力"
+                        className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                        autoComplete="off"
+                    />
+                </div>
+            </div>
+        </fieldset>
         
         {profile && (
             <div className="text-xs text-gray-500 mt-8 pt-6 border-t border-gray-200">

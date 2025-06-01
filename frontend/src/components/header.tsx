@@ -1,6 +1,6 @@
 'use client'
 
-import { useAuth } from '@/context/AuthContext' // AuthContextのパスを確認してください
+import { useAuth } from '@/context/AuthContext' //
 import Link from 'next/link'
 import { useRouter } from 'next/navigation' // ログアウト後のリダイレクト用
 
@@ -42,17 +42,31 @@ export default function Header() {
                   ダッシュボード
                 </Link>
                 <Link
-                  href="/mypage/products" 
+                  href="/mypage/products"
                   className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
                 >
                   商品管理
                 </Link>
                 <Link
-                  href="/launches" // ← 新しく追加したローンチ計画ページへのリンク
+                  href="/launches"
                   className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
                 >
                   ローンチ計画
                 </Link>
+                <Link
+                  href="/educational-tweets" 
+                  className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+                >
+                  教育ツイート作成
+                </Link>
+                {/* ===== ここから追加 ===== */}
+                <Link
+                  href="/tweets" // 新しい「ツイート管理」ページへのパス
+                  className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+                >
+                  ツイート管理
+                </Link>
+                {/* ===== ここまで追加 ===== */}
                 <button
                   onClick={handleSignOut}
                   className="px-3 sm:px-4 py-2 border border-transparent text-xs sm:text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
