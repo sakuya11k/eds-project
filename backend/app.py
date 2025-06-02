@@ -4,10 +4,10 @@ from flask_cors import CORS
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from functools import wraps
-import datetime
-import traceback
-import google.generativeai as genai
-import tweepy
+import datetime # 予約日時の比較やDBへのタイムスタンプ記録に使用します
+import traceback # エラー発生時の詳細なトレースバック取得に使用します
+import google.generativeai as genai # 既存のAI機能で使用
+import tweepy # Xへの投稿に使用します
 
 # .envファイルを読み込む
 load_dotenv()
@@ -41,6 +41,11 @@ if not gemini_api_key: print("!!! WARNING: GEMINI_API_KEY is not set. AI feature
 else:
     try: genai.configure(api_key=gemini_api_key); print(">>> Gemini API key configured.")
     except Exception as e: print(f"!!! WARNING: Failed to configure Gemini API key: {e}. AI features might fail.")
+
+# Cronジョブからのリクエストを認証するためのシークレットキーを環境変数から読み込む (推奨)
+CRON_JOB_SECRET = os.environ.get("CRON_JOB_SECRET")
+if not CRON_JOB_SECRET:
+    print("!!! WARNING: CRON_JOB_SECRET is not set. Scheduled tweet endpoint will be insecure if not protected otherwise.")
 
 # JWT 検証デコレーター
 def token_required(f):
@@ -299,6 +304,7 @@ def create_launch():
         traceback.print_exc(); 
         return jsonify({"message":"Error creating launch due to an exception","error":str(e)}),500
 
+# app.py の get_launches 関数
 @app.route('/api/v1/launches', methods=['GET'])
 @token_required
 def get_launches():
@@ -307,12 +313,45 @@ def get_launches():
     user_id = user.id
     try:
         if not supabase: return jsonify({"message": "Supabase client not initialized!"}), 500
-        res = supabase.table('launches').select("*, products(id, name)").eq('user_id', user_id).order('created_at', desc=True).execute()
-        if res.data is not None: return jsonify(res.data)
-        elif hasattr(res, 'error') and res.error: return jsonify({"message": "Error fetching launches", "error": str(res.error)}), 500
-        return jsonify({"message": "Error fetching launches, unknown reason."}), 500
-    except Exception as e: traceback.print_exc(); return jsonify({"message": "Error fetching launches", "error": str(e)}), 500
+        # productsテーブルからidとnameをJOINして取得 (launches.product_id と products.id を結合)
+        # SupabaseのPythonクライアントの記法でJOINを行う
+        # .select("*, products(id, name)") のようにリレーションを指定
+        res = supabase.table('launches').select(
+            "*, products!inner(id, name)"
+        ).eq('user_id', user_id).order('created_at', desc=True).execute()
 
+        if res.data is not None:
+            # product_id に紐づく products の name を launch オブジェクトのトップレベルに product_nameとして追加する処理
+            # (SupabaseのJOINの仕方によっては、ネストされた形で返ってくるので整形が必要な場合がある)
+            # 以下は、res.data の各 launch オブジェクトに 'products' というキーで商品情報がネストされていると仮定
+            # (Supabase の foreignTable!inner(columns) の場合、通常はネストされる)
+
+            # 注: Supabase の .select("*, products!inner(id, name)") の結果、
+            # launch オブジェクト内に 'products': {'id': '...', 'name': '...'} のように
+            # ネストされた辞書として商品情報が含まれるはずです。
+            # フロントエンド側でこの構造をそのまま利用するか、ここで整形します。
+            # ここでは、フロントエンドが期待する形に合わせて整形する例も示します（必要に応じて）。
+
+            # 例：フロントエンドが launch.product_name を期待している場合
+            # launches_with_product_name = []
+            # for launch in res.data:
+            #     if launch.get('products') and isinstance(launch.get('products'), dict):
+            #         launch['product_name'] = launch['products'].get('name')
+            #     else:
+            #         launch['product_name'] = '不明な商品 (JOIN失敗 or 商品なし)'
+            #     launches_with_product_name.append(launch)
+            # return jsonify(launches_with_product_name)
+
+            # そのまま返す場合 (フロントエンドで launch.products.name のようにアクセス)
+            return jsonify(res.data)
+
+        elif hasattr(res, 'error') and res.error:
+            return jsonify({"message": "Error fetching launches", "error": str(res.error)}), 500
+        return jsonify({"message": "Error fetching launches, unknown reason."}), 500
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"message": "Error fetching launches", "error": str(e)}), 500
+    
 @app.route('/api/v1/launches/<uuid:launch_id>/strategy', methods=['GET', 'PUT'])
 @token_required
 def handle_launch_strategy(launch_id):
@@ -725,6 +764,184 @@ def save_tweet_draft():
     except Exception as e:
         print(f"!!! Tweet draft save exception: {e}"); traceback.print_exc()
         return jsonify({"message": "Error saving tweet draft", "error": str(e)}), 500
+
+
+# --- ★ ここから予約投稿実行APIを追加 ★ ---
+@app.route('/api/v1/tweets/execute-scheduled', methods=['POST'])
+def execute_scheduled_tweets():
+    # (推奨) Cronジョブからのリクエストを認証
+    if CRON_JOB_SECRET: # 環境変数にシークレットが設定されていれば検証する
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or auth_header != f"Bearer {CRON_JOB_SECRET}":
+            print("!!! Unauthorized attempt to execute scheduled tweets.")
+            return jsonify({"message": "Unauthorized"}), 401
+    
+    print(">>> POST /api/v1/tweets/execute-scheduled called")
+    if not supabase:
+        print("!!! Supabase client not initialized in execute_scheduled_tweets")
+        return jsonify({"message": "Supabase client not initialized!"}), 500
+
+    successful_posts = 0
+    failed_posts = 0
+    processed_tweets = []
+
+    try:
+        # 現在時刻より前の、ステータスが 'scheduled' のツイートを取得
+        now_utc_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        
+        # scheduled_at が null でないこと、かつ現在時刻以前であることを確認
+        # Supabaseのクエリでは、直接的な時刻比較が文字列型に対して難しい場合があるため、
+        # 取得後にPython側でフィルタリングすることも検討するか、DBの型をtimestampにする。
+        # ここでは、まず 'scheduled' のものを取得し、Python側で時刻比較する方針も考えられるが、
+        # まずはDBクエリで絞り込みを試みる。
+        # 注意: 'lte' (less than or equal) を使うために scheduled_at は timestamp 型である方が望ましい。
+        #       もし text 型なら、このクエリは期待通りに動かない可能性がある。
+        #       text型の場合は、一旦広めに取得してPython側で正確にフィルタリングする。
+        
+        # 仮にscheduled_atがISO文字列としてtext型に保存されている場合、
+        # 一旦'scheduled'のものを取得し、Python側でパースして比較する方が安全かもしれません。
+        # ここでは、まずDBにフィルタを試みる形にします。
+        scheduled_tweets_res = supabase.table('tweets').select(
+            "*, profiles(x_api_key, x_api_secret_key, x_access_token, x_access_token_secret)" # ユーザーの認証情報をJOIN
+        ).eq('status', 'scheduled').lte('scheduled_at', now_utc_str).execute()
+
+        if hasattr(scheduled_tweets_res, 'error') and scheduled_tweets_res.error:
+            print(f"!!! Error fetching scheduled tweets: {scheduled_tweets_res.error}")
+            return jsonify({"message": "Error fetching scheduled tweets", "error": str(scheduled_tweets_res.error)}), 500
+
+        if not scheduled_tweets_res.data:
+            print("--- No scheduled tweets to post at this time.")
+            return jsonify({"message": "No scheduled tweets to post at this time.", "processed_count": 0}), 200
+
+        tweets_to_process = scheduled_tweets_res.data
+        print(f">>> Found {len(tweets_to_process)} scheduled tweets to process.")
+
+        for tweet_data in tweets_to_process:
+            tweet_id = tweet_data.get('id')
+            user_id = tweet_data.get('user_id')
+            content = tweet_data.get('content')
+            profile_data = tweet_data.get('profiles') # JOINされたprofilesテーブルのデータ
+
+            if not content:
+                print(f"--- Tweet ID {tweet_id} for user {user_id} has no content. Skipping and marking as error.")
+                supabase.table('tweets').update({
+                    "status": "error", 
+                    "error_message": "Content was empty at scheduled time.",
+                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }).eq('id', tweet_id).execute()
+                failed_posts += 1
+                processed_tweets.append({"id": tweet_id, "status": "error", "reason": "Empty content"})
+                continue
+
+            if not profile_data:
+                print(f"--- User profile with X API keys not found for tweet ID {tweet_id} (user_id: {user_id}). Skipping and marking as error.")
+                supabase.table('tweets').update({
+                    "status": "error", 
+                    "error_message": "User profile or X API credentials not found.",
+                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }).eq('id', tweet_id).execute()
+                failed_posts += 1
+                processed_tweets.append({"id": tweet_id, "status": "error", "reason": "Profile/API keys not found"})
+                continue
+
+            api_client_v2 = get_x_api_client(profile_data)
+            if not api_client_v2:
+                print(f"--- Failed to initialize X API client for tweet ID {tweet_id} (user_id: {user_id}). Skipping and marking as error.")
+                supabase.table('tweets').update({
+                    "status": "error", 
+                    "error_message": "Failed to initialize X API client (check credentials).",
+                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }).eq('id', tweet_id).execute()
+                failed_posts += 1
+                processed_tweets.append({"id": tweet_id, "status": "error", "reason": "X API client init failed"})
+                continue
+            
+            try:
+                print(f">>> Attempting to post tweet ID {tweet_id} to X for user {user_id}...")
+                created_x_tweet_response = api_client_v2.create_tweet(text=content)
+                
+                x_tweet_id_str = None
+                if created_x_tweet_response.data and created_x_tweet_response.data.get('id'):
+                    x_tweet_id_str = created_x_tweet_response.data.get('id')
+                    print(f">>> Tweet ID {tweet_id} posted successfully to X! X Tweet ID: {x_tweet_id_str}")
+                    
+                    supabase.table('tweets').update({
+                        "status": "posted",
+                        "posted_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                        "x_tweet_id": x_tweet_id_str,
+                        "error_message": None, # エラーが解消された場合クリア
+                        "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    }).eq('id', tweet_id).execute()
+                    successful_posts += 1
+                    processed_tweets.append({"id": tweet_id, "status": "posted", "x_tweet_id": x_tweet_id_str})
+                else:
+                    # X APIからのエラーレスポンスの処理 (post_tweet_now から流用)
+                    error_detail_x = "Unknown error or unexpected response structure from X API v2 while posting."
+                    if hasattr(created_x_tweet_response, 'errors') and created_x_tweet_response.errors:
+                        error_detail_x = str(created_x_tweet_response.errors)
+                    elif hasattr(created_x_tweet_response, 'reason'): 
+                        error_detail_x = created_x_tweet_response.reason
+                    print(f"!!! Error in X API v2 tweet creation response for tweet ID {tweet_id}: {error_detail_x}")
+                    
+                    supabase.table('tweets').update({
+                        "status": "error",
+                        "error_message": f"X API Error: {error_detail_x}",
+                        "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    }).eq('id', tweet_id).execute()
+                    failed_posts += 1
+                    processed_tweets.append({"id": tweet_id, "status": "error", "reason": f"X API Error: {error_detail_x}"})
+
+            except tweepy.TweepyException as e_tweepy:
+                error_message = str(e_tweepy)
+                # TweepyExceptionのエラーメッセージ整形 (post_tweet_now から流用)
+                if hasattr(e_tweepy, 'response') and e_tweepy.response is not None:
+                    try:
+                        error_json = e_tweepy.response.json()
+                        if 'errors' in error_json and error_json['errors']:
+                             error_message = f"X API Error: {error_json['errors'][0].get('message', str(e_tweepy))}"
+                        elif 'title' in error_json: 
+                             error_message = f"X API Error: {error_json['title']}: {error_json.get('detail', '')}"
+                        elif hasattr(e_tweepy.response, 'data') and e_tweepy.response.data:
+                            error_message = f"X API Error (e.g., 403 Forbidden): {e_tweepy.response.data}"
+                    except ValueError: pass
+                elif hasattr(e_tweepy, 'api_codes') and hasattr(e_tweepy, 'api_messages'):
+                     error_message = f"X API Error {e_tweepy.api_codes}: {e_tweepy.api_messages}"
+
+                print(f"!!! TweepyException posting tweet ID {tweet_id}: {error_message}")
+                traceback.print_exc()
+                supabase.table('tweets').update({
+                    "status": "error", 
+                    "error_message": f"TweepyException: {error_message}",
+                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }).eq('id', tweet_id).execute()
+                failed_posts += 1
+                processed_tweets.append({"id": tweet_id, "status": "error", "reason": f"TweepyException: {error_message}"})
+            except Exception as e_general:
+                print(f"!!! General exception posting tweet ID {tweet_id}: {e_general}")
+                traceback.print_exc()
+                supabase.table('tweets').update({
+                    "status": "error", 
+                    "error_message": f"General Exception: {str(e_general)}",
+                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }).eq('id', tweet_id).execute()
+                failed_posts += 1
+                processed_tweets.append({"id": tweet_id, "status": "error", "reason": f"General Exception: {str(e_general)}"})
+        
+        print(f">>> Scheduled tweets processing finished. Success: {successful_posts}, Failed: {failed_posts}")
+        return jsonify({
+            "message": "Scheduled tweets processing finished.",
+            "successful_posts": successful_posts,
+            "failed_posts": failed_posts,
+            "processed_tweets": processed_tweets
+        }), 200
+
+    except Exception as e:
+        print(f"!!! Major exception in execute_scheduled_tweets: {e}")
+        traceback.print_exc()
+        return jsonify({"message": "An unexpected error occurred during scheduled tweet processing.", "error": str(e)}), 500
+# --- 予約投稿実行APIはここまで ★ ---
+
+
 
 @app.route('/api/v1/tweets', methods=['GET'])
 @token_required
