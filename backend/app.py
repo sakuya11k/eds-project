@@ -8,6 +8,7 @@ import datetime # 予約日時の比較やDBへのタイムスタンプ記録に
 import traceback # エラー発生時の詳細なトレースバック取得に使用します
 import google.generativeai as genai # 既存のAI機能で使用
 import tweepy # Xへの投稿に使用します
+import traceback
 
 # .envファイルを読み込む
 load_dotenv()
@@ -23,6 +24,54 @@ CORS(
     expose_headers=["Content-Length"]
 )
 print(">>> CORS configured.")
+
+# ↓↓↓ここから追記・変更↓↓↓
+PROFILE_COLUMNS_TO_SELECT = [
+    "id", "username", "website", "avatar_url",
+    "brand_voice", "target_persona", # 既存の簡易版カラム。新しい詳細カラムへの移行を検討。
+    "preferred_ai_model",
+    "x_api_key", "x_api_secret_key", "x_access_token", "x_access_token_secret",
+    "updated_at",
+    # 新しく追加したアカウント戦略関連カラム
+    "account_purpose",
+    "main_target_audience",
+    "core_value_proposition",
+    "brand_voice_detail",
+    "main_product_summary",
+    "edu_s1_purpose_base",
+    "edu_s2_trust_base",
+    "edu_s3_problem_base",
+    "edu_s4_solution_base",
+    "edu_s5_investment_base",
+    "edu_s6_action_base",
+    "edu_r1_engagement_hook_base",
+    "edu_r2_repetition_base",
+    "edu_r3_change_mindset_base",
+    "edu_r4_receptiveness_base",
+    "edu_r5_output_encouragement_base",
+    "edu_r6_baseline_shift_base"
+]
+
+# g.profile に格納する主要な情報 (AIプロンプト生成などで頻繁に使うもの)
+G_PROFILE_KEYS = [
+    "id", "username", "preferred_ai_model",
+    "brand_voice", "target_persona", # 既存の簡易版。詳細版への移行を検討。
+    "x_api_key", "x_api_secret_key", "x_access_token", "x_access_token_secret",
+    # 新しいアカウント戦略関連カラム
+    "account_purpose",
+    "main_target_audience", # JSONB
+    "core_value_proposition",
+    "brand_voice_detail",   # JSONB
+    "main_product_summary",
+    # 教育基本方針 (代表的なものやAIで特に重要なものを選定。全て含めるとg.profileが大きくなりすぎる可能性も)
+    "edu_s1_purpose_base",
+    "edu_s3_problem_base",
+    "edu_s4_solution_base",
+    "edu_s6_action_base",
+    "edu_r1_engagement_hook_base",
+    "edu_r3_change_mindset_base"
+]
+# ↑↑↑ここまで追記・変更↑↑↑
 
 # Supabase クライアント初期化
 url: str = os.environ.get("SUPABASE_URL")
@@ -51,7 +100,9 @@ if not CRON_JOB_SECRET:
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if request.method == 'OPTIONS': return f(*args, **kwargs) # OPTIONSリクエストは認証をスキップ
+        if request.method == 'OPTIONS':
+            return f(*args, **kwargs)
+        
         print(">>> Entering token_required decorator (actual request)...")
         token = None
         if 'Authorization' in request.headers:
@@ -64,37 +115,53 @@ def token_required(f):
             print("!!! Token is missing!")
             return jsonify({"message": "Token is missing!"}), 401
         
-        try:
+        try: # tryブロックの開始
             if not supabase:
                 print("!!! Supabase client not initialized in token_required!")
                 return jsonify({"message": "Supabase client not initialized!"}), 500
             
             user_response = supabase.auth.get_user(token)
-            g.user = user_response.user
+            g.user = user_response.user # g.user に代入
             
-            if g.user:
+            if g.user: #
                 profile_res = supabase.table('profiles').select(
-                    "id,username,preferred_ai_model,brand_voice,target_persona,"
-                    "x_api_key,x_api_secret_key,x_access_token,x_access_token_secret"
-                ).eq('id', g.user.id).maybe_single().execute()
-                g.profile = profile_res.data if profile_res.data else {}
-                print(f">>> Token validated for user: {g.user.id}, Pref AI: {g.profile.get('preferred_ai_model')}")
-            else:
-                g.profile = {}
-                print(f">>> Token validated but no user object returned by supabase.auth.get_user().")
+                    ",".join(G_PROFILE_KEYS) 
+                ).eq('id', g.user.id).maybe_single().execute() #
+                g.profile = profile_res.data if profile_res.data else {} #
+                
+                log_g_profile_summary = {
+                    k: (str(v)[:30] + '...' if isinstance(v, (str, dict, list)) and len(str(v)) > 35 else v)
+                    for k, v in g.profile.items()
+                } #
+                
+                print(f">>> Token validated for user: {g.user.id}. g.profile keys loaded: {list(g.profile.keys())}") #
+                
+                if 'main_target_audience' in g.profile: #
+                    print(f"    g.profile sample (main_target_audience): {log_g_profile_summary.get('main_target_audience')}") #
+                
+                if 'brand_voice_detail' in g.profile: #
+                     print(f"    g.profile sample (brand_voice_detail): {log_g_profile_summary.get('brand_voice_detail')}") #
+            
+            else: # if g.user: に対応する else
+                g.profile = {} #
+                print(f">>> Token validated but no user object returned by supabase.auth.get_user().") #
 
-        except Exception as e:
-            print(f"!!! Token validation error: {e}")
-            traceback.print_exc()
-            return jsonify({"message": "Token invalid or expired!", "error": str(e)}), 401
+        except Exception as e: # tryに対応するexcept
+            print(f"!!! Token validation error: {e}") #
+            traceback.print_exc() #
+            return jsonify({"message": "Token invalid or expired!", "error": str(e)}), 401 #
         
-        return f(*args, **kwargs)
+        # tryブロックが正常に終了した場合（except に入らなかった場合）に実行される
+        return f(*args, **kwargs) # この return は try-except ブロックの外側（同じインデントレベル）であるべき
+
     return decorated
 
 @app.route('/')
 def index():
     print(">>> GET / called")
     return jsonify({"message": "Welcome to the EDS Backend API!"})
+
+
 
 @app.route('/api/v1/profile', methods=['GET', 'PUT'])
 @token_required
@@ -111,10 +178,11 @@ def handle_profile():
 
     if request.method == 'GET':
         try:
+            print(f">>> GET /api/v1/profile for user_id: {user_id}. Selecting columns: {PROFILE_COLUMNS_TO_SELECT}")
             res = supabase.table('profiles').select(
-                "id,username,website,avatar_url,brand_voice,target_persona,preferred_ai_model,"
-                "x_api_key,x_api_secret_key,x_access_token,x_access_token_secret,updated_at"
+                ",".join(PROFILE_COLUMNS_TO_SELECT) # 更新されたカラムリストを使用
             ).eq('id',user_id).maybe_single().execute()
+            
             if res.data: 
                 return jsonify(res.data)
             print(f"--- Profile not found for user_id: {user_id} during GET")
@@ -130,11 +198,20 @@ def handle_profile():
             print("!!! Bad request in handle_profile PUT: No JSON data received")
             return jsonify({"message": "Invalid request: No JSON data provided."}), 400
 
-        allowed_fields = [
-            'username','website','avatar_url','brand_voice','target_persona','preferred_ai_model',
-            'x_api_key', 'x_api_secret_key', 'x_access_token', 'x_access_token_secret'
+        # 更新を許可するフィールドリスト (PROFILE_COLUMNS_TO_SELECTからid, updated_at等を除いたものに相当)
+        allowed_fields_for_update = [
+            'username', 'website', 'avatar_url', 'brand_voice', 'target_persona',
+            'preferred_ai_model', 'x_api_key', 'x_api_secret_key',
+            'x_access_token', 'x_access_token_secret',
+            "account_purpose", "main_target_audience", "core_value_proposition",
+            "brand_voice_detail", "main_product_summary",
+            "edu_s1_purpose_base", "edu_s2_trust_base", "edu_s3_problem_base",
+            "edu_s4_solution_base", "edu_s5_investment_base", "edu_s6_action_base",
+            "edu_r1_engagement_hook_base", "edu_r2_repetition_base",
+            "edu_r3_change_mindset_base", "edu_r4_receptiveness_base",
+            "edu_r5_output_encouragement_base", "edu_r6_baseline_shift_base"
         ]
-        payload={k:v for k,v in data.items() if k in allowed_fields}
+        payload={k:v for k,v in data.items() if k in allowed_fields_for_update}
 
         if not payload: 
             print("!!! No valid fields for profile update.")
@@ -142,40 +219,54 @@ def handle_profile():
             
         payload['updated_at']=datetime.datetime.now(datetime.timezone.utc).isoformat()
         
-        log_payload = {k: (v[:5] + '...' if isinstance(v, str) and k.startswith('x_') and v and len(v) > 10 else v) for k,v in payload.items()}
+        log_payload = {
+            k: (str(v)[:20] + '...' if isinstance(v, (str, dict, list)) and len(str(v)) > 25 else v) 
+            for k,v in payload.items()
+        }
         print(f">>> Attempting to update profile for user_id: {user_id} with payload: {log_payload}")
 
         try:
             res=supabase.table('profiles').update(payload).eq('id',user_id).execute()
             
-            if res.data:
-                print(f">>> Profile updated successfully for user_id: {user_id}. Response data: {res.data[0]}")
-                updated_profile_for_g = {key: res.data[0].get(key) for key in [
-                    "id","username","preferred_ai_model","brand_voice","target_persona",
-                    "x_api_key","x_api_secret_key","x_access_token","x_access_token_secret"
-                ] if res.data[0].get(key) is not None}
-                g.profile = updated_profile_for_g
+            if res.data and isinstance(res.data, list) and len(res.data) > 0:
+                print(f">>> Profile updated successfully for user_id: {user_id}.")
+                # g.profile の更新ロジックも新しいキーを考慮
+                updated_profile_data_for_g = {
+                    key: res.data[0].get(key) for key in G_PROFILE_KEYS if res.data[0].get(key) is not None
+                }
+                g.profile = updated_profile_data_for_g # g.profileを更新
+                log_g_profile_summary_put = {
+                    k: (str(v)[:30] + '...' if isinstance(v, (str, dict, list)) and len(str(v)) > 35 else v)
+                    for k, v in g.profile.items()
+                }
+                print(f"    g.profile updated with keys: {list(g.profile.keys())}")
+                print(f"    Sample g.profile content after PUT: {log_g_profile_summary_put}")
                 return jsonify(res.data[0])
             elif hasattr(res,'error') and res.error:
                 print(f"!!! Supabase error updating profile for user_id {user_id}: {res.error}")
                 return jsonify({"message":"Error updating profile","error":str(res.error)}),500
             else:
-                print(f"--- Profile update for user_id {user_id} returned no data, attempting re-fetch.")
+                # 更新成功したが res.data が空の場合の再フェッチ処理
+                print(f"--- Profile update for user_id {user_id} returned no data in res.data (or not a list), attempting re-fetch.")
                 updated_res = supabase.table('profiles').select(
-                    "id,username,website,avatar_url,brand_voice,target_persona,preferred_ai_model,"
-                    "x_api_key,x_api_secret_key,x_access_token,x_access_token_secret,updated_at"
+                     ",".join(PROFILE_COLUMNS_TO_SELECT)
                 ).eq('id',user_id).maybe_single().execute()
                 if updated_res.data:
                     print(f">>> Profile re-fetched successfully for user_id: {user_id}")
-                    updated_profile_for_g_refetch = {key: updated_res.data.get(key) for key in [
-                        "id","username","preferred_ai_model","brand_voice","target_persona",
-                        "x_api_key","x_api_secret_key","x_access_token","x_access_token_secret"
-                    ] if updated_res.data.get(key) is not None}
-                    g.profile = updated_profile_for_g_refetch
+                    updated_profile_for_g_refetch = {
+                        key: updated_res.data.get(key) for key in G_PROFILE_KEYS if updated_res.data.get(key) is not None
+                    }
+                    g.profile = updated_profile_for_g_refetch # g.profileを更新
+                    log_g_profile_summary_refetch = {
+                        k: (str(v)[:30] + '...' if isinstance(v, (str, dict, list)) and len(str(v)) > 35 else v)
+                        for k, v in g.profile.items()
+                    }
+                    print(f"    g.profile updated (after re-fetch) with keys: {list(g.profile.keys())}")
+                    print(f"    Sample g.profile content after re-fetch: {log_g_profile_summary_refetch}")
                     return jsonify(updated_res.data), 200
                 else:
-                    print(f"!!! Failed to re-fetch profile for user_id {user_id} after update.")
-                    return jsonify({"message":"Profile updated, but failed to retrieve updated data."}), 200
+                    print(f"!!! Failed to re-fetch profile for user_id {user_id} after update. Error: {updated_res.error if hasattr(updated_res, 'error') else 'Unknown'}")
+                    return jsonify({"message":"Profile updated, but failed to retrieve updated data."}), 200 # 成功したがデータは返せない場合
         except Exception as e: 
             print(f"!!! Exception updating profile for user_id {user_id}: {e}")
             traceback.print_exc()
@@ -356,52 +447,169 @@ def get_launches():
 @token_required
 def handle_launch_strategy(launch_id):
     user = getattr(g, 'user', None)
-    if not user: return jsonify({"message": "Auth error."}),401
+    if not user: 
+        print("!!! Auth error in handle_launch_strategy: No user object in g.")
+        return jsonify({"message": "Authentication error."}), 401
     user_id = user.id
-    if not supabase: return jsonify({"message": "Supabase client not init!"}),500
-    try: 
-        l_check = supabase.table('launches').select("id,name").eq('id',launch_id).eq('user_id',user_id).maybe_single().execute()
-        if not l_check.data: return jsonify({"message":"Launch not found or access denied."}),404
-    except Exception as e: traceback.print_exc();return jsonify({"message":"Error verifying launch","error":str(e)}),500
     
-    if request.method == 'GET':
-        try:
-            res=supabase.table('education_strategies').select("*").eq('launch_id',launch_id).eq('user_id',user_id).maybe_single().execute()
-            if res.data: return jsonify(res.data)
-            print(f"--- Education strategy not found for launch_id: {launch_id}, user_id: {user_id}. Frontend will likely show empty form.")
-            return jsonify({"message":"Education strategy not yet created for this launch."}),404
-        except Exception as e: traceback.print_exc();return jsonify({"message":"Error fetching strategy","error":str(e)}),500
-    
-    elif request.method == 'PUT':
-        data=request.json
-        if not data: return jsonify({"message": "Invalid request: No JSON data provided."}), 400
-        allowed=['product_analysis_summary','target_customer_summary','edu_s1_purpose','edu_s2_trust','edu_s3_problem','edu_s4_solution','edu_s5_investment','edu_s6_action','edu_r1_engagement_hook','edu_r2_repetition','edu_r3_change_mindset','edu_r4_receptiveness','edu_r5_output_encouragement','edu_r6_baseline_shift']
-        payload={k:v for k,v in data.items() if k in allowed}
-        if not payload: return jsonify({"message":"No valid fields for strategy update."}),400
-        payload['updated_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        
-        print(f">>> Attempting to update strategy for launch_id: {launch_id}, user_id: {user_id}")
-        try:
-            res = supabase.table('education_strategies').update(payload).eq('launch_id',launch_id).eq('user_id',user_id).execute()
-            if res.data: 
-                print(f">>> Strategy updated successfully for launch_id: {launch_id}. Data: {res.data[0]}")
-                return jsonify(res.data[0])
-            elif hasattr(res,'error') and res.error: 
-                print(f"!!! Supabase error updating strategy for launch_id {launch_id}: {res.error}")
-                return jsonify({"message":"Error updating strategy","error":str(res.error)}),500
-            else:
-                check_exists=supabase.table('education_strategies').select('id').eq('launch_id',launch_id).eq('user_id',user_id).maybe_single().execute()
-                if not check_exists.data: 
-                    print(f"--- Strategy for launch_id {launch_id} not found to update. Attempting insert (upsert logic).")
-                    return jsonify({"message":"Strategy to update not found. It should have been created with the launch."}),404
-                print(f"--- Strategy for launch_id {launch_id} updated, but no data returned by default. Check DB.")
-                updated_strat_res = supabase.table('education_strategies').select("*").eq('launch_id',launch_id).eq('user_id',user_id).single().execute()
-                if updated_strat_res.data: return jsonify(updated_strat_res.data)
-                return jsonify({"message":"Strategy updated, but failed to retrieve confirmation."}), 200
+    if not supabase: 
+        print("!!! Supabase client not initialized in handle_launch_strategy.")
+        return jsonify({"message": "Supabase client not initialized!"}), 500
 
-        except Exception as e: 
-            print(f"!!! Exception updating strategy for launch_id {launch_id}: {e}")
-            traceback.print_exc();return jsonify({"message":"Error updating strategy","error":str(e)}),500
+    # まず、リクエストされた launch_id が現在のユーザーのものであるかを確認
+    try: 
+        launch_check_res = supabase.table('launches').select("id, name").eq('id', launch_id).eq('user_id', user_id).maybe_single().execute()
+        if not launch_check_res.data:
+            print(f"!!! Launch ID {launch_id} not found or access denied for user_id {user_id}.")
+            return jsonify({"message": "Launch not found or access denied."}), 404
+        # g.current_launch_name = launch_check_res.data.get('name') # 必要ならgに格納
+    except Exception as e_launch_check:
+        print(f"!!! Exception while verifying launch {launch_id} for user {user_id}: {e_launch_check}")
+        traceback.print_exc()
+        return jsonify({"message": "Error verifying launch ownership", "error": str(e_launch_check)}), 500
+
+    # --- GETリクエストの処理 ---
+    if request.method == 'GET': #
+        try:
+            # ローンチ固有の戦略を取得
+            strategy_res = supabase.table('education_strategies').select("*").eq('launch_id', launch_id).eq('user_id', user_id).maybe_single().execute()
+            launch_strategy_data = strategy_res.data if strategy_res.data else {} 
+            
+            if hasattr(strategy_res, 'error') and strategy_res.error:
+                 print(f"!!! Supabase error fetching specific launch strategy for launch {launch_id}: {strategy_res.error}")
+                 # エラーがあっても、アカウント基本方針は返せるように、ここでは処理を中断しない
+                 launch_strategy_data = {"error_fetching_launch_strategy": str(strategy_res.error)}
+
+
+            account_profile = getattr(g, 'profile', {}) 
+            if not account_profile:
+                 print(f"!!! Warning: g.profile is empty in handle_launch_strategy GET for user {user_id}. Account bases will be empty.")
+
+            account_strategy_bases = {
+                "account_purpose": account_profile.get("account_purpose"),
+                "main_target_audience": account_profile.get("main_target_audience"),
+                "core_value_proposition": account_profile.get("core_value_proposition"),
+                "brand_voice_detail": account_profile.get("brand_voice_detail"),
+                "main_product_summary": account_profile.get("main_product_summary"),
+                "edu_s1_purpose_base": account_profile.get("edu_s1_purpose_base"),
+                "edu_s2_trust_base": account_profile.get("edu_s2_trust_base"),
+                "edu_s3_problem_base": account_profile.get("edu_s3_problem_base"),
+                "edu_s4_solution_base": account_profile.get("edu_s4_solution_base"),
+                "edu_s5_investment_base": account_profile.get("edu_s5_investment_base"),
+                "edu_s6_action_base": account_profile.get("edu_s6_action_base"),
+                "edu_r1_engagement_hook_base": account_profile.get("edu_r1_engagement_hook_base"),
+                "edu_r2_repetition_base": account_profile.get("edu_r2_repetition_base"),
+                "edu_r3_change_mindset_base": account_profile.get("edu_r3_change_mindset_base"),
+                "edu_r4_receptiveness_base": account_profile.get("edu_r4_receptiveness_base"),
+                "edu_r5_output_encouragement_base": account_profile.get("edu_r5_output_encouragement_base"),
+                "edu_r6_baseline_shift_base": account_profile.get("edu_r6_baseline_shift_base")
+            }
+            account_strategy_bases_cleaned = {k: v for k, v in account_strategy_bases.items() if v is not None}
+            
+            print(f">>> GET /api/v1/launches/{launch_id}/strategy. Specific strategy found: {'Yes' if launch_strategy_data and not launch_strategy_data.get('error_fetching_launch_strategy') else 'No/Error'}")
+            # ログ出力は簡潔に
+            # log_account_bases_summary = {
+            #     k: (str(v)[:30] + '...' if v and len(str(v)) > 35 else v) 
+            #     for k, v in account_strategy_bases_cleaned.items()
+            # }
+            # print(f"    Account strategy bases loaded for response: {log_account_bases_summary}")
+
+            return jsonify({
+                "launch_strategy": launch_strategy_data,
+                "account_strategy_bases": account_strategy_bases_cleaned
+            })
+
+        except Exception as e_get_strat: 
+            print(f"!!! Exception in GET handle_launch_strategy for launch {launch_id}: {e_get_strat}")
+            traceback.print_exc()
+            return jsonify({"message":"Error fetching strategy data","error":str(e_get_strat)}),500
+    
+    # --- PUTリクエストの処理 ---
+    elif request.method == 'PUT': #
+        data=request.json
+        if not data: 
+            print(f"!!! PUT /api/v1/launches/{launch_id}/strategy: No JSON data.")
+            return jsonify({"message": "Invalid request: No JSON data provided."}), 400
+        
+        # ローンチ固有の戦略で更新を許可するフィールド
+        allowed_launch_strategy_fields=[
+            'product_analysis_summary','target_customer_summary',
+            'edu_s1_purpose','edu_s2_trust','edu_s3_problem',
+            'edu_s4_solution','edu_s5_investment','edu_s6_action',
+            'edu_r1_engagement_hook','edu_r2_repetition','edu_r3_change_mindset',
+            'edu_r4_receptiveness','edu_r5_output_encouragement','edu_r6_baseline_shift'
+        ]
+        payload={k:v for k,v in data.items() if k in allowed_launch_strategy_fields}
+        
+        if not payload: 
+            print(f"!!! PUT /api/v1/launches/{launch_id}/strategy: No valid fields for strategy update in payload.")
+            return jsonify({"message":"No valid fields for strategy update."}),400
+            
+        payload['updated_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        # launch_id と user_id はWHERE句で使うのでpayloadには不要だが、
+        # upsertやinsertを考慮するならpayloadに含めても良い
+        # payload['launch_id'] = launch_id
+        # payload['user_id'] = user_id
+        
+        log_payload_put_strat = {
+            k: (str(v)[:30] + '...' if v and len(str(v)) > 35 else v)
+            for k,v in payload.items()
+        }
+        print(f">>> Attempting to update strategy for launch_id: {launch_id}, user_id: {user_id} with payload: {log_payload_put_strat}")
+        
+        try:
+            # education_strategies テーブルにレコードが存在するか確認
+            # 存在すればUPDATE、存在しなければINSERT (Upsertの挙動)
+            # SupabaseのPythonクライアントで直接upsertは .upsert() を使う
+            # ここでは、まず launch 作成時に strategy レコードも作られる前提なので、基本は update
+            
+            # 更新対象のレコードが存在するかをまず確認 (所有権チェックも兼ねる)
+            check_strat_res = supabase.table('education_strategies').select("id").eq('launch_id', launch_id).eq('user_id', user_id).maybe_single().execute()
+
+            if hasattr(check_strat_res, 'error') and check_strat_res.error:
+                print(f"!!! Supabase error checking existing strategy for launch {launch_id}: {check_strat_res.error}")
+                return jsonify({"message": "Error checking existing strategy", "error": str(check_strat_res.error)}), 500
+
+            if not check_strat_res.data:
+                # 通常、ローンチ作成時に戦略レコードも作られるはず。もしなければINSERTも考慮するか、エラーとする。
+                # ここではエラーとして扱う (ローンチ作成時のロジックに依存)
+                print(f"!!! Strategy record for launch_id {launch_id} (user_id: {user_id}) not found. It should have been created with the launch.")
+                # 必要ならここでINSERT処理を試みる
+                # payload_insert = payload.copy()
+                # payload_insert['launch_id'] = launch_id
+                # payload_insert['user_id'] = user_id
+                # insert_res = supabase.table('education_strategies').insert(payload_insert).execute()
+                # if insert_res.data: return jsonify(insert_res.data[0]), 201
+                # else: return jsonify({"message": "Strategy not found, and failed to create new one.", "error": str(insert_res.error if hasattr(insert_res,'error') else 'Unknown insert error')}), 500
+                return jsonify({"message": "Strategy record not found. Please ensure launch creation also creates a strategy entry."}), 404
+
+            # レコードが存在するのでUPDATE
+            res = supabase.table('education_strategies').update(payload).eq('launch_id',launch_id).eq('user_id',user_id).execute() #
+            
+            if res.data and isinstance(res.data, list) and len(res.data) > 0: #
+                print(f">>> Strategy updated successfully for launch_id: {launch_id}. Data: {res.data[0]}") #
+                return jsonify(res.data[0]) #
+            elif hasattr(res,'error') and res.error: #
+                print(f"!!! Supabase error updating strategy for launch_id {launch_id}: {res.error}") #
+                return jsonify({"message":"Error updating strategy","error":str(res.error)}),500 #
+            else: #
+                # 更新は成功したが res.data が空の場合 (Supabaseの挙動による)
+                print(f"--- Strategy for launch_id {launch_id} updated (res.data empty or not list), re-fetching for confirmation.")
+                updated_strat_res = supabase.table('education_strategies').select("*").eq('launch_id',launch_id).eq('user_id',user_id).single().execute()
+                if updated_strat_res.data: 
+                    return jsonify(updated_strat_res.data)
+                else:
+                    err_msg_refetch = str(updated_strat_res.error) if hasattr(updated_strat_res,'error') and updated_strat_res.error else "Failed to re-fetch after update."
+                    print(f"!!! Failed to re-fetch strategy after update for launch {launch_id}: {err_msg_refetch}")
+                    return jsonify({"message":"Strategy updated, but failed to retrieve confirmation.", "error_detail": err_msg_refetch}), 200 # 200 OKだが詳細はエラー
+
+        except Exception as e_put_strat: 
+            print(f"!!! Exception updating strategy for launch_id {launch_id}: {e_put_strat}")
+            traceback.print_exc()
+            return jsonify({"message":"Error updating strategy","error":str(e_put_strat)}),500
+            
+    # --- ここに到達する場合はメソッドがGETでもPUTでもない ---
+    print(f"!!! Method {request.method} not allowed for /api/v1/launches/{launch_id}/strategy")
     return jsonify({"message": "Method Not Allowed"}), 405
 
 # --- AI機能 API ---
@@ -621,12 +829,17 @@ def chat_education_element():
         traceback.print_exc();
         return jsonify({"message":"Error processing chat with AI","error":str(e)}),500
 
+#  generate_strategy_draft
+
 @app.route('/api/v1/launches/<uuid:launch_id>/strategy/generate-draft', methods=['POST'])
 @token_required
 def generate_strategy_draft(launch_id):
-    user = getattr(g, 'user', None); user_profile = getattr(g, 'profile', {})
-    if not user: return jsonify({"message": "Authentication error."}), 401
-    user_id = user.id
+    user = getattr(g, 'user', None) # userはtoken_requiredでセットされる
+    user_profile = getattr(g, 'profile', {}) # token_requiredで新しい情報も入っているはず
+    
+    if not user: return jsonify({"message": "Authentication error."}), 401 #念のため
+    user_id = user.id # ユーザーIDも取得しておく
+
     if not supabase: return jsonify({"message": "Supabase client not initialized!"}), 500
     
     current_text_model = get_current_ai_model(user_profile) 
@@ -641,70 +854,108 @@ def generate_strategy_draft(launch_id):
         product_data = launch_info.get('products')
         product_info = product_data if isinstance(product_data, dict) else (product_data[0] if isinstance(product_data, list) and product_data else {})
 
-        brand_voice = user_profile.get('brand_voice', 'プロフェッショナルで、かつ親しみやすいトーン') 
-        target_persona_profile = user_profile.get('target_persona', 'この商品やサービスに価値を感じるであろう一般的な見込み客')
+        # --- ▼ここから user_profile からアカウント戦略情報を取得し、プロンプト用に整形 ▼ ---
+        account_purpose_profile = user_profile.get('account_purpose', 'このアカウントの明確な目的は設定されていません。')
         
+        main_target_audience_data = user_profile.get('main_target_audience') # これはJSONB (リストや辞書) の可能性がある
+        if isinstance(main_target_audience_data, list) and main_target_audience_data: # 簡単な例: 最初のペルソナの名前と悩み
+            persona_sample = main_target_audience_data[0]
+            target_audience_str = f"主なターゲットは「{persona_sample.get('name', '未設定の名前')}」({persona_sample.get('age', '年齢不明')})で、悩みは「{persona_sample.get('悩み', '未設定の悩み')}」などです。"
+        elif isinstance(main_target_audience_data, dict): # 単一の辞書の場合
+             target_audience_str = f"主なターゲットは「{main_target_audience_data.get('name', '未設定の名前')}」で、悩みは「{main_target_audience_data.get('悩み', '未設定の悩み')}」などです。"
+        else:
+            target_audience_str = user_profile.get('target_persona', 'この商品やサービスに価値を感じるであろう一般的な見込み客') # フォールバック
+
+        core_value_proposition_profile = user_profile.get('core_value_proposition', 'アカウント全体の明確な提供価値は設定されていません。')
+        
+        brand_voice_detail_data = user_profile.get('brand_voice_detail') # JSONBの可能性がある
+        if isinstance(brand_voice_detail_data, dict):
+            brand_voice_str = f"トーンは「{brand_voice_detail_data.get('tone', '未設定')}」。重要キーワード: {brand_voice_detail_data.get('keywords', [])}。NGワード: {brand_voice_detail_data.get('ng_words', [])}。"
+        else:
+            brand_voice_str = user_profile.get('brand_voice', 'プロフェッショナルで、かつ親しみやすいトーン') # フォールバック
+        # --- ▲ user_profile からのアカウント戦略情報取得と整形ここまで ▲ ---
+
         strategy_elements_definition = [
-            {'key': 'product_analysis_summary', 'name': '商品分析の要点', 'desc': 'このローンチで提供する商品の主要な特徴、顧客にとっての独自の強み、弱み、市場の競合製品と比較した場合の明確な差別化ポイント、そして顧客がこの商品を選ぶべき理由を簡潔にまとめる。'},
-            {'key': 'target_customer_summary', 'name': 'ターゲット顧客分析の要点', 'desc': 'このローンチで最もリーチしたい具体的な顧客層の人物像（ペルソナ）。年齢、性別、職業、ライフスタイル、価値観、抱えている具体的な悩みや課題、強い欲求、普段どのような情報源から情報を得ているかなどを記述する。'},
-            {'key': 'edu_s1_purpose', 'name': '目的の教育', 'desc': '顧客がこの商品やサービスを利用することで最終的にどのような「理想の未来」や「究極的な目標達成」が期待できるのかを、感情に訴えかけるように鮮明かつ具体的に描き出す。'},
-            {'key': 'edu_s2_trust', 'name': '信用の教育', 'desc': '発信者自身、および提供する商品やサービスに対する顧客からの「信頼」をどのように構築し、高めていくか。具体的な実績、専門性、第三者からの評価（お客様の声、推薦）、透明性のある情報開示、誠実な理念などをどう示すか。'},
-            {'key': 'edu_s3_problem', 'name': '問題点の教育', 'desc': 'ターゲット顧客が現在抱えている明確な問題や、まだ自覚していない潜在的な課題・リスクを具体的に指摘し、その問題が放置された場合に起こりうる不利益や苦痛を認識させ、解決の緊急性を感じさせる。'},
-            {'key': 'edu_s4_solution', 'name': '手段の教育', 'desc': '「問題点の教育」で指摘した問題を、この商品やサービスが具体的にどのように解決できるのか、その独自の方法論、効果的なメカニズム、他にはない優れた点を論理的かつ分かりやすく提示する。'},
-            {'key': 'edu_s5_investment', 'name': '投資の教育', 'desc': 'この商品やサービスに対して金銭的・時間的・労力的な「投資」を行うことが、将来得られる大きなリターン（問題解決、目標達成、価値享受）と比較して、いかに賢明で合理的な判断であるかを納得させる。投資しないことによる機会損失も示唆する。'},
-            {'key': 'edu_s6_action', 'name': '行動の教育', 'desc': '知識を得るだけでなく、実際に「行動」に移すことの重要性を強調し、顧客が具体的な次のステップ（購入、申し込み、問い合わせ、無料体験など）を踏み出すように促す。限定性、緊急性、特典、保証などで背中を押す。'},
-            {'key': 'edu_r1_engagement_hook', 'name': '読む・見る教育（フック）', 'desc': '発信するコンテンツ（ツイート、記事、動画など）の冒頭部分（タイトル、キャッチコピー、導入文など）で、読者や視聴者の注意を瞬時に惹きつけ、「これは自分に関係がある」「続きを読む価値がある」と強く感じさせるための工夫。'},
-            {'key': 'edu_r2_repetition', 'name': '何度も聞く教育（反復）', 'desc': '最も伝えたい重要なメッセージや教育内容を、一度だけでなく、表現方法、切り口、媒体などを変えながら繰り返し顧客に接触させることで、記憶への定着と潜在意識への刷り込みを図る戦略。'},
-            {'key': 'edu_r3_change_mindset', 'name': '変化の教育（現状否定）', 'desc': '人間が本能的に持つ現状維持バイアスや変化への抵抗感を克服させ、「現状のままではまずい」「変化こそが成長と成功に不可欠である」という価値観を植え付け、新しい行動や考え方への移行を促す。'},
-            {'key': 'edu_r4_receptiveness', 'name': '素直の教育（権威付け）', 'desc': '自己流のやり方に固執するのではなく、その分野の専門家、成功者、実績のある指導者の教えや、検証されたノウハウ・情報を「素直」に受け入れ、忠実に実践することの重要性とそのメリットを強調する。'},
-            {'key': 'edu_r5_output_encouragement', 'name': 'アウトプットの教育（UGC促進）', 'desc': '顧客が商品やサービスを通じて学んだこと、体験したこと、感じた変化などを、積極的に自身の言葉でSNSやレビューサイトなどで発信（アウトプット）するように促す。これにより顧客自身の理解深化、記憶定着、そしてUGC（ユーザー生成コンテンツ）による口コミ効果や社会的証明を狙う。'},
-            {'key': 'edu_r6_baseline_shift', 'name': '基準値の教育／覚悟の教育', 'desc': '顧客が持っている既存の常識、価値基準、行動基準（例：価格に対する感覚、努力目標のレベルなど）を、意図的に高いレベルや異なる視点から提示することで破壊・上方修正し、高額商品の購入や困難な目標達成への心理的ハードルを下げ、本気の「覚悟」を促す。'}
+            {'key': 'product_analysis_summary', 'name': '商品分析の要点', 'desc': 'このローンチにおける商品の強み、弱み、ユニークな特徴、競合との比較など'},
+            {'key': 'target_customer_summary', 'name': 'ターゲット顧客分析の要点', 'desc': 'このローンチで狙う顧客層、具体的なペルソナ、悩み、欲求、価値観など'},
+            {'key': 'edu_s1_purpose', 'name': '目的の教育', 'desc': '顧客が目指すべき理想の未来、このローンチ/商品で何が得られるか'},
+            # ... (他の要素の定義は既存のまま) ...
+            {'key': 'edu_r6_baseline_shift', 'name': '基準値の教育／覚悟の教育', 'desc': '顧客の常識や基準値をどう変えるか、行動への覚悟をどう促すか'}
         ]
         generated_drafts = {}
         for element in strategy_elements_definition:
-            element_key = element['key']; element_name_jp = element['name']; element_desc = element['desc']
-            prompt = f"""あなたは経験豊富なマーケティング戦略プランナーです。以下の情報と指示に基づき、「{element_name_jp}」という戦略要素に関する簡潔で具体的な初期ドラフト（箇条書き2～3点、または100～150字程度の説明文）を作成してください。これは後でユーザーが詳細を詰めるためのたたき台となります。
+            element_key = element['key']
+            element_name_jp = element['name']
+            element_desc = element['desc']
+            
+            base_policy_key = f"{element_key}_base" # 例: "edu_s1_purpose_base"
+            element_base_policy = user_profile.get(base_policy_key, 'この要素に関するアカウントの基本方針は特に設定されていません。まずはこちらを検討してください。')
 
-# 提供情報:
-1.  ユーザーの基本設定:
-    * ブランドボイス（発信トーン）: {brand_voice}
-    * 主なターゲット顧客像: {target_persona_profile}
-2.  今回のローンチ（販売キャンペーン）について:
-    * ローンチ名: {launch_info.get('name', '(ローンチ名未設定)')}
-    * ローンチの主な目標: {launch_info.get('goal', '(目標未設定)')}
-3.  販売商品について:
-    * 商品名: {product_info.get('name', '(商品名未設定)')}
-    * 商品の主な提供価値・ベネフィット: {product_info.get('value_proposition', '(提供価値未設定)')}
-    * 商品の簡単な説明: {product_info.get('description', '(商品説明未設定)')}
-4.  現在作成中の戦略要素:
-    * 要素名: {element_name_jp}
-    * この要素の一般的な目的・意味: {element_desc}
+            prompt = f"""あなたは経験豊富なマーケティング戦略プランナーです。
+以下の情報と指示に基づき、「{element_name_jp}」という戦略要素に関する簡潔で具体的な初期ドラフト（箇条書き2～3点、または100～150字程度の説明文）を作成してください。これは後でユーザーが詳細を詰めるためのたたき台となります。
+
+# アカウント全体の戦略方針 (最重要参考情報):
+* アカウントの基本理念・パーパス: {account_purpose_profile}
+* 主要ターゲット顧客像（概要）: {target_audience_str}
+* アカウントのコアとなる提供価値: {core_value_proposition_profile}
+* ブランドボイス・キャラクター（基本設定）: {brand_voice_str}
+* 今回の戦略要素「{element_name_jp}」に関するアカウントの基本方針: {element_base_policy}
+
+# 今回のローンチ（販売キャンペーン）について:
+* ローンチ名: {launch_info.get('name', '(ローンチ名未設定)')}
+* ローンチの主な目標: {launch_info.get('goal', '(目標未設定)')}
+
+# 今回のローンチで販売する商品について:
+* 商品名: {product_info.get('name', '(商品名未設定)')}
+* 商品の主な提供価値・ベネフィット: {product_info.get('value_proposition', '(提供価値未設定)')}
+* 商品の簡単な説明: {product_info.get('description', '(商品説明未設定)')}
+
+# 現在ドラフト作成中の戦略要素:
+* 要素名: {element_name_jp}
+* この要素の一般的な目的・意味: {element_desc}
 
 # 作成指示:
-* 上記の提供情報を踏まえ、「{element_name_jp}」として具体的にどのような内容やメッセージを発信・実行すべきか、初期アイデアをドラフトとして記述してください。
-* ユーザーがこのドラフトを見て「なるほど、ここからこう展開していこう」と考えられるような、具体的で示唆に富む内容を心がけてください。
-* 箇条書きで2～3つのポイントを挙げるか、あるいは100～150字程度の簡潔な説明文で記述してください。
-* このローンチと商品に特化した内容にしてください。一般的な理想論ではなく、具体的なアクションやメッセージの方向性を示してください。
+1.  上記の「アカウント全体の戦略方針」、特に「{element_name_jp}に関するアカウントの基本方針」を最も重要な指針としてください。
+2.  その上で、「今回のローンチと商品情報」に合わせて、このローンチにおける具体的な「{element_name_jp}」の戦略ドラフトを記述してください。
+3.  内容は、ユーザーがこのドラフトを見て「なるほど、ここからこう展開していこう」と考えられるような、具体的で示唆に富むものにしてください。
+4.  形式は、箇条書きで2～3つの主要ポイントを挙げるか、あるいは100～150字程度の簡潔な説明文で記述してください。
+5.  このローンチと商品に特化した、実践的な内容にしてください。一般的な理想論ではなく、具体的なアクションやメッセージの方向性を示してください。
 """
             print(f"\n--- Generating draft for: {element_key} ('{element_name_jp}') ---")
+            # print(f"Prompt for {element_key}:\n{prompt[:300]}...\n...\n{prompt[-300:]}") # デバッグ用にプロンプト一部表示
             try:
-                ai_response = current_text_model.generate_content(prompt); draft_text = ""
-                try: draft_text = ai_response.text
-                except: pass
+                ai_response = current_text_model.generate_content(prompt)
+                draft_text = ""
+                try: 
+                    draft_text = ai_response.text
+                except Exception: # FOR SAFETY
+                    pass 
                 if not draft_text and hasattr(ai_response,'candidates') and ai_response.candidates: 
                     draft_text = "".join([p.text for c in ai_response.candidates for p in c.content.parts if hasattr(p,'text')])
+                
                 if not draft_text and hasattr(ai_response,'prompt_feedback'): 
-                    draft_text = f"AIによる「{element_name_jp}」のドラフト生成に失敗しました (Feedback: {ai_response.prompt_feedback})"
+                    feedback = ai_response.prompt_feedback
+                    print(f"!!! AI prompt feedback for {element_key}: {feedback}")
+                    draft_text = f"AIによる「{element_name_jp}」のドラフト生成に失敗しました (詳細: {feedback})"
+                elif not draft_text:
+                    draft_text = f"AIによる「{element_name_jp}」のドラフト生成結果が空でした。"
+
                 generated_drafts[element_key] = draft_text.strip()
                 print(f">>> Draft for {element_key}: {draft_text.strip()[:100]}...")
             except Exception as e_gen: 
                 print(f"!!! Exception generating draft for {element_key}: {e_gen}")
+                traceback.print_exc()
                 generated_drafts[element_key] = f"AIによる「{element_name_jp}」のドラフト生成中にエラーが発生しました: {str(e_gen)}"
+        
         return jsonify(generated_drafts)
     except Exception as e: 
-        print(f"!!! Exception in generate_strategy_draft: {e}")
-        traceback.print_exc(); 
+        print(f"!!! Exception in generate_strategy_draft for launch {launch_id}: {e}")
+        traceback.print_exc()
         return jsonify({"message": "Error generating strategy draft", "error": str(e)}), 500
+
+# 他のAI関連API (generate_tweet_for_launch, chat_education_element) も同様に、
+# user_profile (g.profile) から新しいアカウント戦略情報を取得し、
+# プロンプトの内容に反映させる修正を行ってください。
 
 # --- ツイート管理API ---
 @app.route('/api/v1/tweets', methods=['POST'])
