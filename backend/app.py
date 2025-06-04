@@ -298,6 +298,325 @@ def create_product():
         elif hasattr(res, 'error') and res.error: return jsonify({"message": "Error creating product", "error": str(res.error)}), 500
         return jsonify({"message": "Error creating product, unknown reason."}), 500
     except Exception as e: traceback.print_exc(); return jsonify({"message": "Error creating product", "error": str(e)}), 500
+    
+    
+    # アカウント目的の提案
+
+@app.route('/api/v1/profile/suggest-purpose', methods=['POST'])
+@token_required
+def suggest_account_purpose():
+    user_profile = getattr(g, 'profile', {})
+    if not user_profile:
+        return jsonify({"message": "User profile not found."}), 403
+
+    data = request.json
+    user_keywords = data.get('user_keywords', '') # 例: "自由な働き方, 初心者向け, 収益化支援"
+    existing_website_content = data.get('website_content', '') # 将来的にウェブサイトのURLから内容を取得する機能も考えられる
+
+    # 現在のプロファイル情報も参考にする
+    current_username = user_profile.get('username', '名無しの発信者')
+    current_product_summary = user_profile.get('main_product_summary', '提供商品・サービスについての詳細情報')
+
+    model = get_current_ai_model(user_profile)
+    if not model:
+        return jsonify({"message": "AI model could not be initialized."}), 500
+
+    prompt_parts = [
+        f"あなたは経験豊富なブランドストラテジスト兼コピーライターです。",
+        f"以下の情報を元に、ユーザー「{current_username}」のXアカウントの魅力的で共感を呼ぶ「基本理念・パーパス」のドラフトを3案、それぞれ100～150字程度で提案してください。",
+        f"## 参考情報:",
+        f"  - ユーザーが入力したキーワード: {user_keywords if user_keywords else '特に指定なし'}",
+        f"  - ユーザーの主要商品/サービス概要: {current_product_summary if current_product_summary else '特に指定なし'}",
+    ]
+    if existing_website_content:
+        prompt_parts.append(f"  - ユーザーの既存ウェブサイトの内容（抜粋）: {existing_website_content[:500]}...") # 長文の場合は切り詰める
+    
+    prompt_parts.append(f"## 作成指示:")
+    prompt_parts.append(f"  - 各提案は、ターゲット顧客に響き、アカウントの方向性を示すような内容にしてください。")
+    prompt_parts.append(f"  - ポジティブで、インスピレーションを与えるようなトーンが望ましいです。")
+    prompt_parts.append(f"  - 提案は箇条書きで、各案の前に「提案1:」「提案2:」のように番号を振ってください。")
+    
+    prompt = "\n".join(prompt_parts)
+    print(f">>> Suggest Account Purpose Prompt: \n{prompt[:500]}...")
+
+    try:
+        ai_response = model.generate_content(prompt)
+        suggestions_text = ai_response.text
+        
+        # AIの応答から各提案をパースする (単純な改行区切りなどを想定)
+        # より複雑な場合は正規表現や構造化された出力をAIに求める
+        suggestions_list = [s.strip().lstrip("提案1:").lstrip("提案2:").lstrip("提案3:").strip() for s in suggestions_text.splitlines() if s.strip()]
+        
+        # 最初の提案をメインのsuggestionとして返すか、リスト全体を返すか選択
+        # ここでは最初の提案を返す例
+        main_suggestion = suggestions_list[0] if suggestions_list else "AIからの提案生成に失敗しました。もう一度お試しください。"
+
+        print(f">>> AI Suggested Purpose: {main_suggestion}")
+        # フロントエンドが複数の提案を扱えるなら、リストで返す
+        # return jsonify({"suggestions": suggestions_list}), 200 
+        return jsonify({"suggestion": main_suggestion}), 200
+
+    except Exception as e:
+        print(f"!!! Exception during AI purpose suggestion: {e}")
+        traceback.print_exc()
+        return jsonify({"message": "AIによる目的提案中にエラーが発生しました。", "error": str(e)}), 500
+    
+    # ペルソナ案を複数提案
+
+@app.route('/api/v1/profile/suggest-persona-draft', methods=['POST'])
+@token_required
+def suggest_persona_draft():
+    user_profile = getattr(g, 'profile', {})
+    if not user_profile:
+        return jsonify({"message": "User profile not found."}), 403
+
+    data = request.json
+    user_keywords = data.get('user_keywords', '') # 例: "30代 主婦 副業"
+    num_personas_to_suggest = data.get('num_personas', 2) # フロントエンドから提案数を指定できるようにする
+
+    # アカウント戦略の他の情報も参考にする
+    current_product_summary = user_profile.get('main_product_summary', '未設定の商品・サービス概要')
+    current_account_purpose = user_profile.get('account_purpose', '未設定のアカウント目的')
+
+    model = get_current_ai_model(user_profile)
+    if not model:
+        return jsonify({"message": "AI model could not be initialized."}), 500
+
+    prompt_parts = [
+        f"あなたは経験豊富なマーケターであり、ペルソナ設定の専門家です。",
+        f"以下の情報を元に、ターゲット顧客となりうる具体的なペルソナのドラフトを{num_personas_to_suggest}案、提案してください。",
+        f"各ペルソナ案には、以下の項目を含めてください: 「名前（例：佐藤みき）」「年齢層/属性（例：30代後半、子育て中のパート主婦）」「主な悩み/欲求/課題（例：子供との時間を大切にしながら、家計のために月5万円の追加収入が欲しい。PCスキルにはあまり自信がない。）」。",
+        f"## 参考情報:",
+        f"  - ユーザーが入力したターゲットキーワード: {user_keywords if user_keywords else '特に指定なし'}",
+        f"  - ユーザーの主要商品/サービス概要: {current_product_summary}",
+        f"  - ユーザーのアカウントの目的: {current_account_purpose}",
+        f"## 作成指示:",
+        f"  - 各ペルソナは、提供される商品やサービスに興味を持ちそうな、現実的な人物像として描写してください。",
+        f"  - 悩みや欲求は、商品やサービスで解決できる可能性のあるものを含めてください。",
+        f"  - 出力は、各ペルソナを辞書のリスト（JSON形式）として返してください。各辞書のキーは 'name', 'age', '悩み' としてください。",
+        f"例: [{'name': '田中あい', 'age': '20代後半 OL', '悩み': 'キャリアアップしたいが、何を学ぶべきか分からない。'}, {{'name': '鈴木けんた', 'age': '40代 個人事業主', '悩み': '集客がうまくいかず、売上が不安定。'}}]"
+    ]
+    prompt = "\n".join(prompt_parts)
+    print(f">>> Suggest Persona Draft Prompt (first 500 chars): \n{prompt[:500]}...")
+
+    try:
+        ai_response = model.generate_content(prompt)
+        # AIにJSON形式で出力するよう指示しているので、パースを試みる
+        try:
+            # AIの応答が ```json ... ``` のようなマークダウン形式で返ってくる場合を考慮
+            import json
+            response_text = ai_response.text
+            if response_text.strip().startswith("```json"):
+                response_text = response_text.strip()[7:-3].strip() # ```json と ``` を除去
+            
+            suggested_personas = json.loads(response_text)
+            if not isinstance(suggested_personas, list): # リスト形式でなければエラー
+                raise ValueError("AI response for personas is not a list.")
+            # 各ペルソナに必要なキーがあるか簡易チェック
+            for persona in suggested_personas:
+                if not all(k in persona for k in ['name', 'age', '悩み']):
+                    raise ValueError("Persona object missing required keys.")
+
+        except (json.JSONDecodeError, ValueError) as e_parse:
+            print(f"!!! Error parsing AI response for personas: {e_parse}. Raw text: {ai_response.text}")
+            # パース失敗時は、テキストをそのまま返すか、エラーメッセージと共に返す
+            # ここでは、パース失敗を示すメッセージをリストに入れて返す例
+            suggested_personas = [{"name": "AI提案解析エラー", "age": "-", "悩み": f"AIの応答を期待した形式で解析できませんでした。AIの応答: {ai_response.text[:200]}..."}]
+            toast_message_frontend = "AI提案の形式が正しくありませんでした。テキストとして表示します。"
+            # return jsonify({"message": toast_message_frontend, "suggested_personas_raw_text": ai_response.text}), 500
+
+
+        print(f">>> AI Suggested Personas: {suggested_personas}")
+        return jsonify({"suggested_personas": suggested_personas}), 200
+
+    except Exception as e:
+        print(f"!!! Exception during AI persona suggestion: {e}")
+        traceback.print_exc()
+        return jsonify({"message": "AIによるペルソナ提案中にエラーが発生しました。", "error": str(e)}), 500
+    
+    
+    # 商品概要やペルソナの悩みから提供価値を提案します
+
+@app.route('/api/v1/profile/suggest-value-proposition', methods=['POST'])
+@token_required
+def suggest_value_proposition():
+    user_profile = getattr(g, 'profile', {})
+    if not user_profile:
+        return jsonify({"message": "User profile not found."}), 403
+
+    # アカウント戦略から必要な情報を取得
+    current_product_summary = user_profile.get('main_product_summary', '未設定の商品・サービス概要')
+    main_target_audience_data = user_profile.get('main_target_audience') # JSONB想定 (リスト)
+    
+    target_audience_summary = "設定されていません。"
+    if main_target_audience_data and isinstance(main_target_audience_data, list) and len(main_target_audience_data) > 0:
+        # 簡単のため、最初のペルソナの悩みを代表として使用
+        first_persona = main_target_audience_data[0]
+        target_audience_summary = f"ペルソナ「{first_persona.get('name', '未設定')}」が抱える主な悩みは「{first_persona.get('悩み', '未設定の悩み')}」です。"
+    elif user_profile.get('target_persona'): # 簡易版のフォールバック
+        target_audience_summary = user_profile.get('target_persona')
+
+    model = get_current_ai_model(user_profile)
+    if not model:
+        return jsonify({"message": "AI model could not be initialized."}), 500
+
+    prompt_parts = [
+        f"あなたは顧客の心を掴む価値提案（バリュープロポジション）を作成する専門家です。",
+        f"以下の情報を元に、このアカウントの「コアとなる提供価値」のメッセージ案を3つ、それぞれ簡潔に提案してください。",
+        f"## 参考情報:",
+        f"  - アカウントの主要商品/サービス概要: {current_product_summary}",
+        f"  - 主なターゲット顧客とその悩み（概要）: {target_audience_summary}",
+        f"  - アカウントの目的・パーパス（もしあれば）: {user_profile.get('account_purpose', '未設定')}",
+        f"## 作成指示:",
+        f"  - 各提案は、ターゲット顧客が「これは私のためのものだ！」と感じ、強く惹きつけられるような、具体的でユニークな価値を表現してください。",
+        f"  - 商品やサービスが顧客のどのような問題を解決し、どのような理想の未来をもたらすのかを明確に示してください。",
+        f"  - 簡潔かつキャッチーな表現を心がけてください（各50～100字程度）。",
+        f"  - 提案は箇条書きで、各案の前に「提案A:」「提案B:」のように記号を振ってください。"
+    ]
+    prompt = "\n".join(prompt_parts)
+    print(f">>> Suggest Value Proposition Prompt (first 500 chars): \n{prompt[:500]}...")
+
+    try:
+        ai_response = model.generate_content(prompt)
+        suggestions_text = ai_response.text
+        suggestions_list = [s.strip().lstrip("提案A:").lstrip("提案B:").lstrip("提案C:").strip() for s in suggestions_text.splitlines() if s.strip()]
+        main_suggestion = suggestions_list[0] if suggestions_list else "AIからの提案生成に失敗しました。"
+
+        print(f">>> AI Suggested Value Proposition: {main_suggestion}")
+        # フロントエンドが複数提案を扱えるならリストで返す
+        # return jsonify({"suggestions": suggestions_list}), 200 
+        return jsonify({"suggestion": main_suggestion}), 200
+    except Exception as e:
+        print(f"!!! Exception during AI value proposition suggestion: {e}")
+        traceback.print_exc()
+        return jsonify({"message": "AIによる提供価値提案中にエラーが発生しました。", "error": str(e)}), 500
+    
+    
+    # ブランドボイス詳細（トーン、キーワード、NGワード）を提案
+
+@app.route('/api/v1/profile/suggest-brand-voice', methods=['POST'])
+@token_required
+def suggest_brand_voice():
+    user_profile = getattr(g, 'profile', {})
+    if not user_profile:
+        return jsonify({"message": "User profile not found."}), 403
+
+    data = request.json
+    adjectives = data.get('adjectives', '') # 例: "親しみやすい, 専門的, 熱血"
+    # reference_account_url = data.get('reference_account_url', '') # 将来的にはURLから分析も
+
+    model = get_current_ai_model(user_profile)
+    if not model:
+        return jsonify({"message": "AI model could not be initialized."}), 500
+
+    prompt_parts = [
+        f"あなたはブランドパーソナリティとSNSコミュニケーションの専門家です。",
+        f"ユーザーが目指すブランドイメージに合致する「ブランドボイス詳細」を提案してください。",
+        f"提案には、「基本トーン（簡潔な説明文）」「推奨キーワード/フレーズ（5個程度）」「避けるべきNGワード/フレーズ（3個程度）」の3点を含めてください。",
+        f"## ユーザーがイメージするブランドの雰囲気（形容詞など）:",
+        f"  - {adjectives if adjectives else '特に指定なし (ユーザーの既存設定や商品特性から推測してください)'}",
+        f"## 参考情報（ユーザーの既存設定）:",
+        f"  - アカウントの目的: {user_profile.get('account_purpose', '未設定')}",
+        f"  - ターゲット顧客像（概要）: {user_profile.get('target_persona', '未設定')}", # main_target_audience を使う方が良い
+        f"  - 主要商品/サービス概要: {user_profile.get('main_product_summary', '未設定')}",
+        f"## 作成指示:",
+        f"  - 提案するトーン、キーワード、NGワードは、上記の情報と調和し、一貫性のあるブランドイメージを形成する助けとなるようにしてください。",
+        f"  - 出力は、キーが 'tone' (文字列), 'keywords' (文字列のリスト), 'ng_words' (文字列のリスト) であるJSONオブジェクト形式で返してください。",
+        f"例: {{ \"tone\": \"読者に寄り添い、優しく励ますお姉さんのようなトーン。専門的な内容も分かりやすく解説するが、上から目線にならないように注意する。\", \"keywords\": [\"あなたならできる\", \"一緒に頑張ろう\", \"大丈夫だよ\", \"ステップバイステップ\", \"分かりやすい\"], \"ng_words\": [\"絶対\", \"簡単すぎる\", \"誰でも稼げる\"] }}"
+    ]
+    prompt = "\n".join(prompt_parts)
+    print(f">>> Suggest Brand Voice Prompt (first 500 chars): \n{prompt[:500]}...")
+    
+    # 登録済み商品情報から「主要商品群の分析サマリー」を生成
+
+@app.route('/api/v1/profile/suggest-product-summary', methods=['POST'])
+@token_required
+def suggest_product_summary():
+    user_profile = getattr(g, 'profile', {})
+    user_id = getattr(g, 'user', {}).id
+    if not user_profile or not user_id:
+        return jsonify({"message": "User context not found."}), 403
+
+    # ユーザーの商品情報をデータベースから取得
+    try:
+        products_res = supabase.table('products').select("name, description, price, target_audience, value_proposition").eq('user_id', user_id).execute()
+        if hasattr(products_res, 'error') and products_res.error:
+            print(f"!!! Error fetching user products: {products_res.error}")
+            return jsonify({"message": "ユーザーの商品情報の取得に失敗しました。", "error": str(products_res.error)}), 500
+        
+        user_products = products_res.data
+        if not user_products:
+            return jsonify({"suggestion": "登録されている商品がありません。まず商品を登録してください。"}), 200 # 提案ではなく情報提供
+
+    except Exception as e_db:
+        print(f"!!! DB Exception fetching user products: {e_db}")
+        traceback.print_exc()
+        return jsonify({"message": "商品情報取得中にデータベースエラーが発生しました。", "error": str(e_db)}), 500
+
+    model = get_current_ai_model(user_profile)
+    if not model:
+        return jsonify({"message": "AI model could not be initialized."}), 500
+
+    products_info_text = "\n".join([
+        f"- 商品名: {p.get('name', '無名')}\n  説明: {p.get('description', '説明なし')[:100]}...\n  提供価値: {p.get('value_proposition', '提供価値未設定')[:100]}..."
+        for p in user_products[:5] # 最大5商品までを参考情報とする（プロンプト長制限のため）
+    ])
+
+    prompt_parts = [
+        f"あなたは複数の商品を展開するビジネスのブランド戦略家です。",
+        f"以下のユーザーが登録している商品群の情報を元に、アカウント全体の「主要商品群の分析サマリー」を作成してください。",
+        f"このサマリーは、アカウント戦略の基盤となり、発信内容の一貫性を保つために使われます。",
+        f"## ユーザー登録商品情報（一部抜粋）:",
+        f"{products_info_text if products_info_text else '商品情報がありません。'}",
+        f"## 作成指示:",
+        f"  - 商品群全体に共通する「強み」「中心的な提供価値」「主要なターゲット層への訴求ポイント」を分析し、簡潔に（200～300字程度で）まとめてください。",
+        f"  - 個々の商品紹介ではなく、商品群全体を俯瞰した上での特徴や戦略的意義を記述してください。",
+        f"  - ポジティブで魅力的な表現を心がけてください。"
+    ]
+    prompt = "\n".join(prompt_parts)
+    print(f">>> Suggest Product Summary Prompt (first 500 chars): \n{prompt[:500]}...")
+
+    try:
+        ai_response = model.generate_content(prompt)
+        suggestion = ai_response.text.strip() if ai_response.text else "AIからの提案生成に失敗しました。"
+        
+        print(f">>> AI Suggested Product Summary: {suggestion}")
+        return jsonify({"suggestion": suggestion}), 200
+    except Exception as e:
+        print(f"!!! Exception during AI product summary suggestion: {e}")
+        traceback.print_exc()
+        return jsonify({"message": "AIによる商品概要サマリー提案中にエラーが発生しました。", "error": str(e)}), 500
+
+    try:
+        ai_response = model.generate_content(prompt)
+        try:
+            import json
+            response_text = ai_response.text
+            if response_text.strip().startswith("```json"):
+                response_text = response_text.strip()[7:-3].strip()
+            
+            suggested_brand_voice_detail = json.loads(response_text)
+            # 必要なキーがあるか簡易チェック
+            if not all(k in suggested_brand_voice_detail for k in ['tone', 'keywords', 'ng_words']):
+                raise ValueError("Brand voice object missing required keys.")
+            if not isinstance(suggested_brand_voice_detail['keywords'], list) or not isinstance(suggested_brand_voice_detail['ng_words'], list):
+                raise ValueError("Keywords or NG words are not lists.")
+
+        except (json.JSONDecodeError, ValueError) as e_parse:
+            print(f"!!! Error parsing AI response for brand voice: {e_parse}. Raw text: {ai_response.text}")
+            # パース失敗時のフォールバック
+            suggested_brand_voice_detail = {
+                "tone": f"AI提案の解析に失敗しました。AIの応答: {ai_response.text[:100]}...",
+                "keywords": [],
+                "ng_words": []
+            }
+        
+        print(f">>> AI Suggested Brand Voice Detail: {suggested_brand_voice_detail}")
+        return jsonify({"suggestion": suggested_brand_voice_detail}), 200
+    except Exception as e:
+        print(f"!!! Exception during AI brand voice suggestion: {e}")
+        traceback.print_exc()
+        return jsonify({"message": "AIによるブランドボイス提案中にエラーが発生しました。", "error": str(e)}), 500
 
 @app.route('/api/v1/products', methods=['GET'])
 @token_required
@@ -312,6 +631,196 @@ def get_products():
         elif hasattr(res, 'error') and res.error: return jsonify({"message": "Error fetching products", "error": str(res.error)}), 500
         return jsonify({"message": "Error fetching products, unknown reason."}), 500
     except Exception as e: traceback.print_exc(); return jsonify({"message": "Error fetching products", "error": str(e)}), 500
+    
+    
+    # アカウント戦略の各項目についてAIと対話形式
+
+@app.route('/api/v1/profile/chat-generic-field', methods=['POST'])
+@token_required
+def chat_account_strategy_field():
+    user_profile = getattr(g, 'profile', {})
+    if not user_profile:
+        return jsonify({"message": "User profile not found."}), 403
+
+    data = request.json
+    field_key = data.get('field_key') # 例: "account_purpose", "edu_s1_purpose_base"
+    field_label = data.get('field_label', '指定の項目')
+    current_field_value = data.get('current_field_value', '')
+    chat_history_frontend = data.get('chat_history', []) # フロントエンドからのチャット履歴
+    current_user_message_text = data.get('current_user_message')
+    account_context = data.get('account_context', {}) # フロントから送られてくる他のフォーム項目の情報
+
+    if not all([field_key, current_user_message_text]):
+        return jsonify({"message": "Missing required parameters: field_key or current_user_message."}), 400
+
+    # account_context から主要な情報を抽出
+    acc_purpose = account_context.get('purpose', user_profile.get('account_purpose', '未設定'))
+    acc_product_summary = account_context.get('product_summary', user_profile.get('main_product_summary', '未設定'))
+    acc_value_prop = account_context.get('core_value_proposition', user_profile.get('core_value_proposition', '未設定'))
+    acc_brand_voice = account_context.get('brand_voice_tone', user_profile.get('brand_voice_detail', {}).get('tone', 'プロフェッショナル'))
+
+
+    system_instruction_parts = [
+        f"あなたは、ユーザーのXアカウント戦略における「{field_label}」の項目を、より具体的で魅力的な内容にブラッシュアップするためのAIアシスタントです。",
+        f"ユーザーの現在のアカウント戦略の全体像（一部）は以下の通りです。これを踏まえて対話してください。",
+        f"  - アカウントの目的: {acc_purpose}",
+        f"  - 主要商品概要: {acc_product_summary}",
+        f"  - コア提供価値: {acc_value_prop}",
+        f"  - ブランドボイス（トーン）: {acc_brand_voice}",
+        f"現在、ユーザーは「{field_label}」について以下のように考えています（または入力途中です）:\n-----\n{current_field_value if current_field_value else '(まだ具体的に記述されていません)'}\n-----",
+        f"あなたの役割は、ユーザーの思考を整理し、質問を投げかけたり、具体的なアイデアを提案したりすることで、この「{field_label}」の項目がより戦略的で効果的なものになるよう支援することです。",
+        f"共感的かつ建設的な対話を心がけ、ユーザーが自身の言葉でより良い戦略を練り上げられるように導いてください。"
+    ]
+    system_instruction_text = "\n".join(system_instruction_parts)
+
+    model = get_current_ai_model(user_profile, system_instruction_text=system_instruction_text)
+    if not model:
+        return jsonify({"message": "AI chat model could not be initialized."}), 500
+
+    gemini_sdk_history = []
+    for entry in chat_history_frontend:
+        role_sdk = entry.get('role')
+        parts_data_sdk = entry.get('parts')
+        if role_sdk and parts_data_sdk and isinstance(parts_data_sdk, list) and parts_data_sdk:
+            text_content_sdk = parts_data_sdk[0].get('text') if isinstance(parts_data_sdk[0], dict) else None
+            if isinstance(text_content_sdk, str):
+                gemini_sdk_history.append({'role': role_sdk, 'parts': [{'text': text_content_sdk}]})
+    
+    chat_session = model.start_chat(history=gemini_sdk_history)
+    print(f">>> Sending to Gemini Chat (Account Strategy Field: {field_label}, History Len: {len(gemini_sdk_history)}): User says: {current_user_message_text[:100]}...")
+
+    try:
+        response = chat_session.send_message(current_user_message_text)
+        ai_response_text = ""
+        try: ai_response_text = response.text
+        except Exception: pass
+        if not ai_response_text and hasattr(response, 'candidates') and response.candidates:
+            ai_response_text = "".join([p.text for c in response.candidates for p in c.content.parts if hasattr(p,'text')])
+        
+        if not ai_response_text:
+            feedback_message = "AIからの応答が空でした。"
+            if hasattr(response,'prompt_feedback'): 
+                feedback_message = f"AI応答エラー: {response.prompt_feedback}"
+            return jsonify({"message": feedback_message, "ai_message": None}), 500
+
+        print(f">>> Gemini Chat AI Response for {field_label}: {ai_response_text.strip()[:100]}...")
+        return jsonify({"ai_message": ai_response_text.strip()})
+        
+    except Exception as e:
+        print(f"!!! Exception in chat_account_strategy_field for {field_label}: {e}")
+        traceback.print_exc()
+        return jsonify({"message": f"AIとの「{field_label}」に関する対話中にエラーが発生しました。", "error": str(e)}), 500
+
+
+# 主要戦略情報を基に12の基本方針ドラフトを一括生成
+
+@app.route('/api/v1/profile/generate-base-policies-draft', methods=['POST'])
+@token_required
+def generate_account_base_policies_draft():
+    user_profile = getattr(g, 'profile', {})
+    if not user_profile:
+        return jsonify({"message": "User profile not found."}), 403
+    user_id = user_profile.get('id') # ログ用
+
+    data = request.json
+    # フロントエンドから送られてくる、AIのインプットとなる主要なアカウント戦略情報
+    account_purpose = data.get('account_purpose', user_profile.get('account_purpose', '未設定のアカウント目的'))
+    # main_target_audience_summary はフロントエンドで整形されて送られてくる想定
+    main_target_audience_summary = data.get('main_target_audience_summary', '未設定のターゲット顧客像の概要')
+    core_value_proposition = data.get('core_value_proposition', user_profile.get('core_value_proposition', '未設定のコア提供価値'))
+    main_product_summary = data.get('main_product_summary', user_profile.get('main_product_summary', '未設定の商品概要'))
+    # ブランドボイスのトーンを取得 (詳細設定があればそちらを優先)
+    brand_voice_tone_from_detail = user_profile.get('brand_voice_detail', {}).get('tone')
+    brand_voice_tone = brand_voice_tone_from_detail if brand_voice_tone_from_detail else user_profile.get('brand_voice', 'プロフェッショナルかつ親しみやすい')
+
+
+    model = get_current_ai_model(user_profile)
+    if not model:
+        return jsonify({"message": "AI model could not be initialized."}), 500
+
+    # 12の教育要素の定義 (フロントエンドの basePolicyElementsDefinition と対応)
+    base_policies_elements = [
+        {'key': 'edu_s1_purpose_base', 'name': '目的の教育 基本方針', 'desc': "アカウント全体として、顧客が目指すべき理想の未来や提供する究極的な価値観についての方針。"},
+        {'key': 'edu_s2_trust_base', 'name': '信用の教育 基本方針', 'desc': "アカウント全体として、発信者やブランドへの信頼をどのように構築・維持していくかの方針。"},
+        {'key': 'edu_s3_problem_base', 'name': '問題点の教育 基本方針', 'desc': "ターゲット顧客が抱えるであろう、アカウント全体で共通して取り上げる問題意識や課題についての方針。"},
+        {'key': 'edu_s4_solution_base', 'name': '手段の教育 基本方針', 'desc': "アカウントが提供する情報や商品が、顧客の問題をどのように解決するかの基本的な考え方。"},
+        {'key': 'edu_s5_investment_base', 'name': '投資の教育 基本方針', 'desc': "自己投資の重要性や、情報・商品への投資をどのように正当化し促すかの全体的な方針。"},
+        {'key': 'edu_s6_action_base', 'name': '行動の教育 基本方針', 'desc': "顧客に具体的な行動を促すための、アカウントとしての一貫したメッセージやアプローチ。"},
+        {'key': 'edu_r1_engagement_hook_base', 'name': '読む・見る教育 基本方針', 'desc': "コンテンツの冒頭で読者の興味を惹きつけるための、アカウント共通のテクニックや考え方。"},
+        {'key': 'edu_r2_repetition_base', 'name': '何度も聞く教育 基本方針', 'desc': "重要なメッセージを繰り返し伝え、記憶に定着させるためのアカウント全体でのアプローチ。"},
+        {'key': 'edu_r3_change_mindset_base', 'name': '変化の教育 基本方針', 'desc': "現状維持からの脱却や、新しい価値観への変化を促すための、アカウントとしての基本的なスタンス。"},
+        {'key': 'edu_r4_receptiveness_base', 'name': '素直の教育 基本方針', 'desc': "情報やアドバイスを素直に受け入れることの重要性をどのように伝えるかの全体方針。"},
+        {'key': 'edu_r5_output_encouragement_base', 'name': 'アウトプットの教育 基本方針', 'desc': "顧客からの発信（UGC）を促すためのアカウント全体での働きかけや仕組み作りの考え方。"},
+        {'key': 'edu_r6_baseline_shift_base', 'name': '基準値/覚悟の教育 基本方針', 'desc': "顧客の常識や基準値を引き上げ、行動への覚悟を促すためのアカウントとしての一貫した姿勢。"},
+    ]
+    generated_drafts = {}
+
+    print(f">>> Generating All Base Policies Draft for user: {user_id}")
+    print(f"    Context - Purpose: {str(account_purpose)[:70]}...")
+    print(f"    Context - Target Audience Summary: {str(main_target_audience_summary)[:70]}...")
+    print(f"    Context - Core Value: {str(core_value_proposition)[:70]}...")
+    print(f"    Context - Product Summary: {str(main_product_summary)[:70]}...")
+    print(f"    Context - Brand Voice Tone: {str(brand_voice_tone)[:70]}...")
+
+
+    for element in base_policies_elements:
+        element_key = element['key']
+        element_name_jp = element['name']
+        element_desc = element['desc']
+        
+        prompt = f"""あなたは経験豊富なブランド戦略コンサルタントであり、SNSアカウントの教育コンテンツ戦略立案の専門家です。
+以下のユーザーアカウント全体の戦略情報を強く踏まえ、「{element_name_jp}」に関するアカウントの【基本方針】のドラフトを150字～200字程度で作成してください。
+この基本方針は、ユーザーが今後の具体的な発信内容や個別の販売キャンペーン（ローンチ）におけるメッセージを考える際の重要な土台となります。
+
+# ユーザーアカウント全体の戦略情報（コンテキスト）:
+* アカウントの基本理念・パーパス: {account_purpose}
+* 主要ターゲット顧客像（概要）: {main_target_audience_summary}
+* アカウントのコア提供価値: {core_value_proposition}
+* 主要商品群の分析サマリー: {main_product_summary}
+* ブランドボイス（基本トーン）: {brand_voice_tone}
+
+# 現在ドラフト作成中の「基本方針」の要素:
+* 要素名: {element_name_jp}
+* この要素の一般的な目的・意味: {element_desc}
+
+# 作成指示:
+* 上記の「ユーザーアカウント全体の戦略情報」と矛盾せず、それらを補強・具体化するような「{element_name_jp}」の基本方針を記述してください。
+* このアカウントが、この教育要素を通じて顧客にどのような影響を与え、どのような状態に導きたいのか、その核となる考え方や方向性を示してください。
+* ユーザーがこのドラフトを元に、具体的な行動計画や発信テーマを考えやすくなるような、示唆に富んだ内容にしてください。
+* 簡潔かつ実践的な言葉を選び、抽象的すぎないように注意してください。
+* 生成するテキストは、指定された要素の基本方針の本文のみとしてください。前置きや後書きは不要です。
+"""
+        # print(f"    Generating draft for: {element_key} ('{element_name_jp}') - Prompt (first 100 chars): {prompt[:100]}...") # デバッグ用
+        try:
+            ai_response = model.generate_content(prompt)
+            draft_text = ""
+            try:
+                draft_text = ai_response.text.strip()
+            except Exception: # Safety net for .text access
+                pass
+            
+            if not draft_text and hasattr(ai_response, 'candidates') and ai_response.candidates:
+                 draft_text = "".join([part.text for candidate in ai_response.candidates for part in candidate.content.parts if hasattr(part, 'text')]).strip()
+
+            if not draft_text:
+                print(f"!!! AI response for {element_key} was empty or invalid.")
+                if hasattr(ai_response, 'prompt_feedback'):
+                    print(f"    Prompt Feedback: {ai_response.prompt_feedback}")
+                draft_text = f"「{element_name_jp}」のAI提案生成に失敗しました (応答が空です)。"
+
+
+            generated_drafts[element_key] = draft_text
+            print(f"    Draft for {element_key}: {draft_text[:70]}...")
+        except Exception as e_gen:
+            print(f"!!! Exception generating draft for {element_key}: {e_gen}")
+            traceback.print_exc()
+            generated_drafts[element_key] = f"AIによる「{element_name_jp}」のドラフト生成中にエラーが発生しました: {str(e_gen)}"
+            
+    return jsonify(generated_drafts), 200
+
+
+
+
 
 @app.route('/api/v1/products/<uuid:product_id>', methods=['PUT'])
 @token_required
@@ -648,6 +1157,72 @@ def get_current_ai_model(user_profile, default_model_name='gemini-1.5-flash-late
             print(f"!!! AI: Failed to initialize default model '{default_model_name}': {e_default}.")
             traceback.print_exc()
             return None
+
+
+# app.py に追記
+
+@app.route('/api/v1/launches/<uuid:launch_id>', methods=['DELETE'])
+@token_required
+def delete_launch(launch_id):
+    user = getattr(g, 'user', None)
+    if not user:
+        return jsonify({"message": "Authentication error."}), 401
+    user_id = user.id
+
+    if not supabase:
+        return jsonify({"message": "Supabase client not initialized!"}), 500
+
+    print(f">>> DELETE /api/v1/launches/{launch_id} called by user_id: {user_id}")
+
+    try:
+        # 0. (任意だが推奨) 削除対象のローンチが本当にそのユーザーのものかを確認
+        launch_to_delete_res = supabase.table('launches').select("id").eq('id', launch_id).eq('user_id', user_id).maybe_single().execute()
+        if not launch_to_delete_res.data:
+            print(f"!!! Launch {launch_id} not found or access denied for user {user_id} during delete.")
+            return jsonify({"message": "Launch not found or access denied."}), 404
+
+        # 1. 関連する教育戦略を削除 (もし外部キーでCASCADE DELETEが設定されていない場合)
+        #    Supabaseで launches.id と education_strategies.launch_id がリレーションされ、
+        #    ON DELETE CASCADE が設定されていれば、launches の削除時に自動で education_strategies も削除される。
+        #    その場合は以下の education_strategies の削除処理は不要。
+        #    ここでは、念のため手動で削除する例も示す（CASCADEが理想）。
+        
+        # strategy_delete_res = supabase.table('education_strategies').delete().eq('launch_id', launch_id).eq('user_id', user_id).execute()
+        # if hasattr(strategy_delete_res, 'error') and strategy_delete_res.error:
+        #     # ローンチ本体を削除する前に戦略削除でエラーが出た場合、どう扱うか検討。
+        #     # ここではエラーを返し、ローンチ本体の削除は行わない。
+        #     print(f"!!! Error deleting education strategy for launch {launch_id}: {strategy_delete_res.error}")
+        #     return jsonify({"message": "Failed to delete associated education strategy.", "error": str(strategy_delete_res.error)}), 500
+        # print(f"--- Associated education strategy for launch {launch_id} deleted (or did not exist).")
+
+        # 2. ローンチ計画本体を削除
+        #    ON DELETE CASCADE が設定されていれば、この操作だけで関連する education_strategies も削除される。
+        delete_res = supabase.table('launches').delete().eq('id', launch_id).eq('user_id', user_id).execute()
+
+        if hasattr(delete_res, 'error') and delete_res.error:
+            print(f"!!! Supabase launch delete error for launch_id {launch_id}: {delete_res.error}")
+            return jsonify({"message": "Error deleting launch", "error": str(delete_res.error)}), 500
+        
+        # delete().execute() の data は通常、削除されたレコードを含まないか、影響行数を示す。
+        # エラーがないことをもって成功と判断する。
+        # (delete_res.count で影響行数を確認できる場合がある)
+        # if delete_res.data and len(delete_res.data) > 0: # または delete_res.count > 0
+        #     print(f">>> Launch {launch_id} deleted successfully by user {user_id}.")
+        #     return '', 204
+        # else:
+        #     # 実際には削除されたが data が空の場合もあるので、エラーがなければ成功とみなす
+        #     print(f">>> Launch {launch_id} deletion processed for user {user_id}. Assuming success as no error reported.")
+        #     return '', 204
+
+        print(f">>> Launch {launch_id} deleted successfully (or was already gone) by user {user_id}.")
+        return '', 204 # No Content
+
+    except Exception as e:
+        print(f"!!! Exception deleting launch {launch_id}: {e}")
+        traceback.print_exc()
+        return jsonify({"message": "An unexpected error occurred while deleting the launch", "error": str(e)}), 500
+
+
 
 @app.route('/api/v1/launches/<uuid:launch_id>/generate-tweet', methods=['POST'])
 @token_required
@@ -1459,12 +2034,20 @@ def post_tweet_now(tweet_id_param):
         return jsonify({"message": "An unexpected error occurred while posting the tweet.", "error": str(e)}), 500
 # --- ツイート即時投稿APIはここまで ★ ---
 
+#generate_educational_tweet
+
 @app.route('/api/v1/educational-tweets/generate', methods=['POST'])
 @token_required
 def generate_educational_tweet():
     user = getattr(g, 'user', None)
-    user_id = user.id
-    user_profile = getattr(g, 'profile', {})
+    # user_id = user.id # token_required で user は存在するはずなので、user_id も同様
+    user_profile = getattr(g, 'profile', {}) # token_required でアカウント戦略情報もロードされている想定
+
+    if not user: # 念のため
+        print("!!! Auth error in generate_educational_tweet: No user object in g.")
+        return jsonify({"message": "Authentication error."}), 401
+    
+    user_id = user.id # ユーザーIDを取得
 
     if not supabase:
         print("!!! Supabase client not initialized in generate_educational_tweet")
@@ -1488,7 +2071,7 @@ def generate_educational_tweet():
     print(f">>> POST /api/v1/educational-tweets/generate called by user_id: {user_id}")
     print(f"    education_element_key: {education_element_key}, theme: {theme}")
 
-    current_text_model = get_current_ai_model(user_profile)
+    current_text_model = get_current_ai_model(user_profile) # user_profile を渡す
     if not current_text_model:
         print("!!! Gemini model not initialized in generate_educational_tweet")
         return jsonify({"message": "AI model (Gemini) could not be initialized."}), 500
@@ -1511,21 +2094,61 @@ def generate_educational_tweet():
     }
     education_element_name = element_map.get(education_element_key, education_element_key) 
 
-    brand_voice = user_profile.get('brand_voice', 'プロフェッショナルかつ親しみやすい')
-    target_persona = user_profile.get('target_persona', '一般的なインターネットユーザー')
+    # --- ▼ アカウント戦略情報をプロンプトに活用 ▼ ---
+    # brand_voice と target_persona は user_profile (g.profile) から取得
+    # brand_voice_detail や main_target_audience があればそちらを優先的に使用する
+    
+    brand_voice_to_use = user_profile.get('brand_voice', 'プロフェッショナルかつ親しみやすい') # デフォルト
+    if user_profile.get('brand_voice_detail') and isinstance(user_profile.get('brand_voice_detail'), dict):
+        brand_voice_detail_dict = user_profile.get('brand_voice_detail', {})
+        if brand_voice_detail_dict.get('tone'):
+            brand_voice_to_use = brand_voice_detail_dict.get('tone')
+            keywords_str = ", ".join(brand_voice_detail_dict.get('keywords', []))
+            ng_words_str = ", ".join(brand_voice_detail_dict.get('ng_words', []))
+            if keywords_str: brand_voice_to_use += f" (キーワード: {keywords_str})"
+            if ng_words_str: brand_voice_to_use += f" (NGワード: {ng_words_str})"
+
+
+    target_persona_to_use = user_profile.get('target_persona', '一般的なインターネットユーザー') # デフォルト
+    if user_profile.get('main_target_audience') and isinstance(user_profile.get('main_target_audience'), list) and len(user_profile.get('main_target_audience')) > 0:
+        # 複数のペルソナがある場合、ここでは最初のものを代表として使うか、概要を生成する
+        # 簡単のため、最初のペルソナの「悩み」を代表として使用する例
+        first_persona = user_profile.get('main_target_audience')[0]
+        target_persona_to_use = f"ペルソナ「{first_persona.get('name', '未設定')}」({first_persona.get('age', '年齢不明')}) のような、特に「{first_persona.get('悩み', '特定の悩み') }」を抱える層"
+    
+    # 選択された education_element_key に対応する「基本方針」を取得
+    base_policy_key = f"{education_element_key}_base" # 例: "edu_s1_purpose_base"
+    element_base_policy = user_profile.get(base_policy_key) # g.profile から取得
+    # --- ▲ アカウント戦略情報をプロンプトに活用 ▲ ---
 
     prompt_parts = [
-        "あなたはプロのX（旧Twitter）マーケティングコンサルタントです。",
-        f"以下の情報に基づいて、Xの投稿文案を1つ作成してください。",
-        f"・投稿のトーン（ブランドボイス）: {brand_voice}",
-        f"・ターゲット顧客像: {target_persona}",
-        f"・重視する教育要素: {education_element_name} ({education_element_key})",
-        f"・ツイートの主なテーマやキーワード: {theme}",
-        "・指示: ユーザーエンゲージメント（いいね、リツイート、返信など）を促すような、具体的で魅力的な内容にしてください。ツイートは日本語で140字以内で、適切な絵文字を1～3個使用してください。"
+        "あなたはプロのX（旧Twitter）マーケティングコンサルタントであり、エンゲージメントの高いツイートを作成する専門家です。",
+        f"以下のユーザー設定と指示に基づいて、魅力的で具体的なXの投稿文案を1つ作成してください。",
+        f"## ユーザーアカウント設定:",
+        f"  - 発信のトーン（ブランドボイス）: {brand_voice_to_use}",
+        f"  - 主なターゲット顧客像: {target_persona_to_use}",
+        f"  - アカウントの目的・パーパス: {user_profile.get('account_purpose', '未設定')}",
+        f"  - アカウントのコア提供価値: {user_profile.get('core_value_proposition', '未設定')}",
+        f"## 今回のツイートのテーマと教育要素:",
+        f"  - 重視する教育要素: 「{education_element_name}」 ({education_element_key})",
     ]
+    if element_base_policy: # 基本方針があればプロンプトに追加
+        prompt_parts.append(f"  - 上記教育要素に関するアカウントの基本方針（最重要参考情報）: {element_base_policy}")
+    
+    prompt_parts.append(f"  - ユーザーが指定したツイートの具体的なテーマやキーワード: {theme}")
+    prompt_parts.append(f"## 作成指示:")
+    prompt_parts.append(f"  - 上記の「アカウントの基本方針」を最優先の指針とし、それに沿った内容でツイートを作成してください。")
+    prompt_parts.append(f"  - 次に「ユーザーが指定したツイートの具体的なテーマやキーワード」を具体的に盛り込んでください。")
+    prompt_parts.append(f"  - ツイートは日本語で、Xの文字数制限（現在は140字だが、柔軟に）を意識しつつ、簡潔で分かりやすいものにしてください。")
+    prompt_parts.append(f"  - 読者の興味を引き、いいね、リツイート、返信、プロフィールへの遷移などのエンゲージメントを促すような内容にしてください。")
+    prompt_parts.append(f"  - 文脈に合わせて適切な絵文字を1～3個、効果的に使用してください。")
+    prompt_parts.append(f"  - 関連性が高く効果的なハッシュタグを2～3個含めてください。")
+    prompt_parts.append(f"  - 禁止事項: 誇大広告、誤解を招く表現、不適切な言葉遣いは避けること。")
+    prompt_parts.append(f"  - 提供された情報を最大限活用し、最高のツイート案を1つだけ提案してください。")
+
     prompt = "\n".join(filter(None, prompt_parts)) 
 
-    print(f">>> Gemini Prompt for educational tweet (model: {current_text_model._model_name}):\n{prompt[:500]}...")
+    print(f">>> Gemini Prompt for educational tweet (model: {current_text_model._model_name}):\n{prompt[:600]}...\n...\n{prompt[-300:] if len(prompt) > 900 else ''}")
 
     try:
         ai_response = current_text_model.generate_content(prompt)
@@ -1533,28 +2156,35 @@ def generate_educational_tweet():
         
         try:
             generated_tweet_text = ai_response.text
-        except Exception:
+        except Exception: # Safety net
+            print("!!! AI response.text failed, trying candidates parsing.")
             pass 
 
         if not generated_tweet_text and hasattr(ai_response, 'candidates') and ai_response.candidates:
             generated_tweet_text = "".join([part.text for candidate in ai_response.candidates for part in candidate.content.parts if hasattr(part, 'text')])
         
-        if not generated_tweet_text and hasattr(ai_response, 'prompt_feedback'):
-            error_feedback = str(ai_response.prompt_feedback)
-            print(f"!!! AI generation failed with feedback: {error_feedback}")
-            return jsonify({"message": f"AIによるツイート生成に失敗しました: {error_feedback}"}), 500
-            
         if not generated_tweet_text:
-            print("!!! AI response does not contain usable text.")
-            return jsonify({"message": "AIからの応答にツイート文案が含まれていませんでした。"}), 500
-
-        print(f">>> AI Generated Tweet: {generated_tweet_text.strip()}")
+            error_feedback_message = "AIからの応答が空でした。"
+            if hasattr(ai_response, 'prompt_feedback'):
+                feedback_obj = ai_response.prompt_feedback
+                if hasattr(feedback_obj, 'block_reason') and feedback_obj.block_reason:
+                     error_feedback_message = f"AI応答エラー: ブロックされました。理由: {feedback_obj.block_reason}"
+                     if hasattr(feedback_obj, 'block_reason_message') and feedback_obj.block_reason_message:
+                         error_feedback_message += f" (詳細: {feedback_obj.block_reason_message})"
+                else:
+                    error_feedback_message = f"AI応答エラー: {str(feedback_obj)}"
+                print(f"!!! AI generation failed with feedback: {error_feedback_message}")
+            else:
+                print("!!! AI response does not contain usable text and no prompt_feedback.")
+            return jsonify({"message": f"AIによるツイート生成に失敗しました: {error_feedback_message}", "generated_tweet": None}), 500
+            
+        print(f">>> AI Generated Educational Tweet: {generated_tweet_text.strip()}")
         return jsonify({"generated_tweet": generated_tweet_text.strip()}), 200
 
     except Exception as e:
-        print(f"!!! Exception during AI tweet generation: {e}")
+        print(f"!!! Exception during AI educational tweet generation: {e}")
         traceback.print_exc()
-        return jsonify({"message": "AIによるツイート生成中にエラーが発生しました。", "error": str(e)}), 500
+        return jsonify({"message": "AIによるツイート生成中に予期せぬエラーが発生しました。", "error": str(e)}), 500
 
 # --- X API クライアント準備とツイート操作API ---
 def get_x_api_client(user_x_credentials):
