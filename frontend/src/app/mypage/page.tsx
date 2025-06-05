@@ -23,7 +23,7 @@ export type MyPageProfileFormData = {
 const initialMyPageFormData: MyPageProfileFormData = {
   username: '',
   website: null,
-  preferred_ai_model: 'gemini-1.5-flash-latest',
+  preferred_ai_model: 'gemini-2.5-flash-preview-05-20',
   x_api_key: null,
   x_api_secret_key: null,
   x_access_token: null,
@@ -31,8 +31,8 @@ const initialMyPageFormData: MyPageProfileFormData = {
 };
 
 const aiModelOptions = [
-  { value: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash (高速・標準)' },
-  { value: 'gemini-1.5-pro-latest', label: 'Gemini 1.5 Pro (高性能・高品質)' },
+  { value: 'gemini-2.5-flash-preview-05-20', label: 'Gemini 2.5 Flash (高速・標準)' },
+  { value: 'gemini-2.5-pro-preview-05-06', label: 'Gemini 2.5 Pro (高性能・高品質)' },
 ];
 
 // APIレスポンスの型も MyPageProfileFormData を基にする

@@ -1,14 +1,16 @@
+
 import os
 from flask import Flask, jsonify, request, g
 from flask_cors import CORS
 from dotenv import load_dotenv
 from supabase import create_client, Client
 from functools import wraps
-import datetime # 予約日時の比較やDBへのタイムスタンプ記録に使用します
-import traceback # エラー発生時の詳細なトレースバック取得に使用します
-import google.generativeai as genai # 既存のAI機能で使用
-import tweepy # Xへの投稿に使用します
+import datetime
 import traceback
+import google.generativeai as genai
+# GoogleSearchRetrieval を削除し、Tool と GenerationConfig のみインポート
+from google.generativeai.types import Tool, GenerationConfig
+import tweepy
 
 # .envファイルを読み込む
 load_dotenv()
@@ -115,46 +117,106 @@ def token_required(f):
             print("!!! Token is missing!")
             return jsonify({"message": "Token is missing!"}), 401
         
-        try: # tryブロックの開始
+        try: 
             if not supabase:
                 print("!!! Supabase client not initialized in token_required!")
                 return jsonify({"message": "Supabase client not initialized!"}), 500
             
             user_response = supabase.auth.get_user(token)
-            g.user = user_response.user # g.user に代入
+            g.user = user_response.user 
             
-            if g.user: #
+            if g.user: 
                 profile_res = supabase.table('profiles').select(
                     ",".join(G_PROFILE_KEYS) 
-                ).eq('id', g.user.id).maybe_single().execute() #
-                g.profile = profile_res.data if profile_res.data else {} #
+                ).eq('id', g.user.id).maybe_single().execute() 
+                g.profile = profile_res.data if profile_res.data else {} 
                 
                 log_g_profile_summary = {
                     k: (str(v)[:30] + '...' if isinstance(v, (str, dict, list)) and len(str(v)) > 35 else v)
                     for k, v in g.profile.items()
-                } #
+                } 
                 
-                print(f">>> Token validated for user: {g.user.id}. g.profile keys loaded: {list(g.profile.keys())}") #
+                print(f">>> Token validated for user: {g.user.id}. g.profile keys loaded: {list(g.profile.keys())}") 
                 
-                if 'main_target_audience' in g.profile: #
-                    print(f"    g.profile sample (main_target_audience): {log_g_profile_summary.get('main_target_audience')}") #
+                if 'main_target_audience' in g.profile: 
+                    print(f"    g.profile sample (main_target_audience): {log_g_profile_summary.get('main_target_audience')}") 
                 
-                if 'brand_voice_detail' in g.profile: #
-                     print(f"    g.profile sample (brand_voice_detail): {log_g_profile_summary.get('brand_voice_detail')}") #
+                if 'brand_voice_detail' in g.profile: 
+                     print(f"    g.profile sample (brand_voice_detail): {log_g_profile_summary.get('brand_voice_detail')}") 
             
-            else: # if g.user: に対応する else
-                g.profile = {} #
-                print(f">>> Token validated but no user object returned by supabase.auth.get_user().") #
+            else: 
+                g.profile = {} 
+                print(f">>> Token validated but no user object returned by supabase.auth.get_user().") 
 
-        except Exception as e: # tryに対応するexcept
-            print(f"!!! Token validation error: {e}") #
-            traceback.print_exc() #
-            return jsonify({"message": "Token invalid or expired!", "error": str(e)}), 401 #
+        except Exception as e: 
+            print(f"!!! Token validation error: {e}") 
+            traceback.print_exc() 
+            return jsonify({"message": "Token invalid or expired!", "error": str(e)}), 401 
         
-        # tryブロックが正常に終了した場合（except に入らなかった場合）に実行される
-        return f(*args, **kwargs) # この return は try-except ブロックの外側（同じインデントレベル）であるべき
+        return f(*args, **kwargs) 
 
     return decorated
+
+# [get_current_ai_model 関数を修正]
+def get_current_ai_model(user_profile, default_model_name='gemini-2.5-flash-preview-05-20', system_instruction_text=None, use_Google_Search=False):
+    if not gemini_api_key:
+        print("!!! AI features disabled: GEMINI_API_KEY is not set.")
+        return None
+    
+    preferred_model_name = user_profile.get('preferred_ai_model', default_model_name)
+    print(f">>> AI: Attempting to use model: {preferred_model_name}")
+
+    model_kwargs = {}
+    if system_instruction_text:
+        model_kwargs['system_instruction'] = system_instruction_text
+        print(f">>> AI: Using System instruction for {preferred_model_name}: {system_instruction_text[:150]}...")
+
+    tools_to_use = []
+    if use_Google_Search:
+        try:
+            # Google検索ツールを設定 (Python SDKの正式な方法)
+            # from google.genai.types import GoogleSearchRetrieval # Block 1でインポート済み想定
+            Google_Search_tool = Tool(Google_Search_retrieval=GoogleSearchRetrieval()) # disable_attribution はデフォルトFalse
+            tools_to_use.append(Google_Search_tool)
+            print(f">>> AI: Google Search tool configured for model {preferred_model_name}.")
+        except NameError: # GoogleSearchRetrieval がインポートできていない場合など
+            print(f"!!! AI Warning: GoogleSearchRetrieval not defined or imported. Google Search tool will not be available.")
+        except Exception as e_tool:
+            print(f"!!! AI: Failed to configure Google Search tool: {e_tool}. Proceeding without it.")
+            # tools_to_use は空のまま
+
+    if tools_to_use: # tools_to_use リストが空でなければ tools 引数を渡す
+        model_kwargs['tools'] = tools_to_use
+        print(f">>> AI: Model will be initialized with tools: {model_kwargs['tools']}")
+
+    try:
+        generation_config_params = {
+            "temperature": 0.7,
+        }
+        generation_config_obj = GenerationConfig(**generation_config_params) # GenerationConfigクラスを使用
+        
+        model = genai.GenerativeModel(
+            model_name=preferred_model_name, # model_nameキーワード引数を明示
+            generation_config=generation_config_obj,
+            **model_kwargs
+        )
+        print(f">>> AI: Successfully initialized model: {preferred_model_name}")
+        return model
+    except Exception as e_pref:
+        print(f"!!! AI: Failed to initialize preferred model '{preferred_model_name}': {e_pref}. Trying default '{default_model_name}'.")
+        try:
+            generation_config_obj = GenerationConfig(temperature=0.7) # デフォルトも同様の設定
+            model = genai.GenerativeModel(
+                model_name=default_model_name, # model_nameキーワード引数を明示
+                generation_config=generation_config_obj,
+                **model_kwargs # tools_to_use が含まれていればここで渡される
+            )
+            print(f">>> AI: Successfully initialized default model: {default_model_name} {'with tools' if model_kwargs.get('tools') else ''}")
+            return model
+        except Exception as e_default:
+            print(f"!!! AI: Failed to initialize default model '{default_model_name}': {e_default}.")
+            traceback.print_exc()
+            return None
 
 @app.route('/')
 def index():
@@ -904,6 +966,9 @@ def create_launch():
         traceback.print_exc(); 
         return jsonify({"message":"Error creating launch due to an exception","error":str(e)}),500
 
+
+
+
 # app.py の get_launches 関数
 @app.route('/api/v1/launches', methods=['GET'])
 @token_required
@@ -1121,42 +1186,6 @@ def handle_launch_strategy(launch_id):
     print(f"!!! Method {request.method} not allowed for /api/v1/launches/{launch_id}/strategy")
     return jsonify({"message": "Method Not Allowed"}), 405
 
-# --- AI機能 API ---
-def get_current_ai_model(user_profile, default_model_name='gemini-1.5-flash-latest', system_instruction_text=None):
-    if not gemini_api_key: 
-        print("!!! AI features disabled: GEMINI_API_KEY is not set.")
-        return None
-    preferred_model = user_profile.get('preferred_ai_model', default_model_name)
-    print(f">>> AI: Attempting to use model: {preferred_model}")
-    model_kwargs = {}
-    if system_instruction_text: 
-        model_kwargs['system_instruction'] = system_instruction_text
-        print(f">>> AI: Using System instruction for {preferred_model}: {system_instruction_text[:150]}...")
-    try:
-        generation_config = genai.types.GenerationConfig(
-            temperature=0.7,
-        )
-        model = genai.GenerativeModel(
-            preferred_model, 
-            generation_config=generation_config,
-            **model_kwargs
-        )
-        print(f">>> AI: Successfully initialized model: {preferred_model}")
-        return model
-    except Exception as e_pref:
-        print(f"!!! AI: Failed to initialize preferred model '{preferred_model}': {e_pref}. Trying default '{default_model_name}'.")
-        try: 
-            model = genai.GenerativeModel(
-                default_model_name, 
-                generation_config=generation_config, 
-                **model_kwargs
-            )
-            print(f">>> AI: Successfully initialized default model: {default_model_name}")
-            return model
-        except Exception as e_default: 
-            print(f"!!! AI: Failed to initialize default model '{default_model_name}': {e_default}.")
-            traceback.print_exc()
-            return None
 
 
 # app.py に追記
@@ -2270,6 +2299,191 @@ def post_dummy_tweet():
         print(f"!!! General Exception posting dummy tweet for user_id {user_id}: {error_message}")
         traceback.print_exc()
         return jsonify({"message": "Error posting dummy tweet (General Exception).", "error": error_message}), 500
+    
+   
+  
+# --- Block 5: 新しいAPIエンドポイント - 初期投稿生成 (Google検索対応) ---
+@app.route('/api/v1/initial-tweets/generate', methods=['POST'])
+@token_required
+def generate_initial_tweet():
+    user = getattr(g, 'user', None)
+    user_profile = getattr(g, 'profile', {}) # g.profile には token_required で情報がロードされている想定
+    if not user:
+        return jsonify({"message": "Authentication error."}), 401
+    user_id = user.id
+
+    data = request.json
+    if not data:
+        return jsonify({"message": "Invalid request: No JSON data provided."}), 400
+
+    initial_post_type = data.get('initial_post_type')
+    theme = data.get('theme', '')
+    use_Google_Search_flag = data.get('use_Google_Search', False)
+
+    if not initial_post_type:
+        return jsonify({"message": "Missing required field: initial_post_type"}), 400
+
+    # スクリーンショットのエラー箇所 (Ln 2294, 2300, 2303, 2308) 周辺のprint文と関数呼び出し
+    print(f">>> POST /api/v1/initial-tweets/generate by user_id: {user_id}")
+    print(f"    initial_post_type: {initial_post_type}, theme: \"{theme}\", use_Google_Search: {use_Google_Search_flag}")
+
+    # get_current_ai_model は Block 3 で定義されている想定
+    current_text_model = get_current_ai_model(user_profile, use_Google_Search=use_Google_Search_flag)
+    if not current_text_model:
+        return jsonify({"message": "AI model could not be initialized."}), 500
+
+    prompt_parts = ["あなたはプロのX（旧Twitter）コンテンツクリエイターです。アカウント立ち上げ初期のフォロワー獲得とエンゲージメント向上に特化しています。"]
+
+    prompt_parts.append("## あなたのアカウント基本情報:")
+    prompt_parts.append(f"  - アカウント名（仮）: {user_profile.get('username', '(あなたのXアカウント名)')}")
+    prompt_parts.append(f"  - アカウントの目的/パーパス: {user_profile.get('account_purpose', '(このアカウントで達成したいこと、提供したい価値)')}")
+    prompt_parts.append(f"  - コア提供価値: {user_profile.get('core_value_proposition', '(読者が得られる最も重要な価値)')}")
+
+    main_target_audience_data = user_profile.get('main_target_audience')
+    if isinstance(main_target_audience_data, list) and main_target_audience_data:
+        persona_summary_parts = []
+        for i, p_data in enumerate(main_target_audience_data[:2]): # 最初の2人までを要約
+             persona_summary_parts.append(f"ペルソナ{i+1}「{p_data.get('name', '未設定の名前')}」({p_data.get('age', '年齢不明')})の主な悩み: {p_data.get('悩み', '未設定の悩み')}")
+        prompt_parts.append(f"  - 主なターゲット顧客像: {'; '.join(persona_summary_parts)}")
+    elif isinstance(user_profile.get('target_persona'), str):
+         prompt_parts.append(f"  - 主なターゲット顧客像: {user_profile.get('target_persona')}")
+    else:
+        prompt_parts.append("  - 主なターゲット顧客像: (まだ具体的に設定されていません)")
+
+    brand_voice_detail = user_profile.get('brand_voice_detail')
+    if isinstance(brand_voice_detail, dict) and brand_voice_detail.get('tone'):
+        prompt_parts.append(f"  - ブランドボイス（トーン）: {brand_voice_detail.get('tone')}")
+        keywords_list = brand_voice_detail.get('keywords', [])
+        if keywords_list:
+            prompt_parts.append(f"    - 推奨キーワード例: {', '.join(keywords_list[:3])}")
+    elif isinstance(user_profile.get('brand_voice'), str):
+        prompt_parts.append(f"  - ブランドボイス（トーン）: {user_profile.get('brand_voice')}")
+    else:
+        prompt_parts.append("  - ブランドボイス（トーン）: (まだ具体的に設定されていません。例: 親しみやすく、専門的)")
+
+    prompt_parts.append("\n## 今回作成するツイートの指示:")
+    if initial_post_type == "follow_reason":
+        prompt_parts.append("  - ツイートの目的: このアカウントをフォローすべき理由、提供する独自の価値やフォロワーが得られる未来を明確に伝え、強いフォロー動機を喚起する。")
+        prompt_parts.append(f"  - ユーザーが指定したツイートのテーマやキーワード（最重要）: {theme if theme else 'アカウントの強みや読者の具体的なベネフィットを中心に、独自性を強調してください。'}")
+        if use_Google_Search_flag:
+            prompt_parts.append("  - 追加指示: 最新の市場動向やターゲット顧客が関心を持つであろう新しい視点・情報をGoogle検索で調査し、それを踏まえて他のアカウントとの差別化ポイントを明確にし、より説得力のあるフォローメリットを訴求してください。")
+    elif initial_post_type == "self_introduction":
+        prompt_parts.append("  - ツイートの目的: 発信者の信頼性、専門性、そして共感を呼ぶような親しみやすい人となりが伝わる自己紹介を行う。なぜこの情報発信をしているのかという背景も示唆する。")
+        prompt_parts.append(f"  - ユーザーが指定したツイートのテーマやキーワード（実績、経験、発信への想いなどの要点。最重要）: {theme if theme else 'あなたのユニークな経歴、専門分野での実績や経験、そしてこの情報発信を通じて伝えたい情熱や理念を中心に記述してください。'}")
+    elif initial_post_type == "value_tips":
+        prompt_parts.append("  - ツイートの目的: ターゲット顧客がすぐに役立つと感じ、保存・拡散したくなるような具体的なTipsや、ハッとするような本質的な気づきを提供する。")
+        prompt_parts.append(f"  - ユーザーが指定したツイートのテーマやキーワード（最重要）: {theme if theme else 'あなたの専門分野に関する、読者が明日から実践できるような具体的で actionable なアドバイスを中心にしてください。'}")
+        if use_Google_Search_flag:
+            prompt_parts.append("  - 追加指示: 指定されたテーマに関する最新のテクニック、データ、ツール、または一般的な誤解を覆すような新しい情報などをGoogle検索で調査し、それを元に読者にとって価値の高い、独自性のあるTipsや気づきを提供してください。")
+    else:
+        prompt_parts.append(f"  - ユーザーが指定したツイートのテーマやキーワード: {theme if theme else '特に指定なし'}")
+        prompt_parts.append(f"  - ツイートの目的: 「{initial_post_type}」という目的に沿った、アカウント初期のフォロワー獲得とエンゲージメント向上に貢献する、魅力的で具体的なツイートを作成してください。")
+
+    prompt_parts.append("\n## ツイート作成ルール:")
+    prompt_parts.append("  - 文字数: Xの現在の標準的な投稿文字数（140字以内を目安としつつ、状況に応じて多少の増減は可）で、簡潔かつインパクトのあるメッセージに。")
+    prompt_parts.append("  - 絵文字: 文脈に合わせて1～3個程度、効果的に使用して親しみやすさや視認性を高める。")
+    prompt_parts.append("  - ハッシュタグ: 関連性が高く、ターゲット層にリーチしやすいものを2～3個厳選して含める。")
+    prompt_parts.append("  - CTA（Call To Action）: 読者にフォロー、いいね、リプライ、プロフィールの確認といった次のアクションを自然に促すような要素を subtly に含めること。")
+    prompt_parts.append("  - 独自性: 提供されたアカウント情報を最大限に活かし、ありきたりではない、このアカウントならではのツイートを作成すること。")
+    prompt_parts.append("  - 出力形式: 生成されたツイート本文のみを返してください。前置きや後書きは一切不要です。")
+
+    prompt = "\n".join(prompt_parts)
+    model_name_for_log = current_text_model._model_name if current_text_model and hasattr(current_text_model, '_model_name') else 'N/A'
+    print(f">>> Gemini Prompt for initial tweet (model: {model_name_for_log}, search: {use_Google_Search_flag}):\n{prompt[:600]}...")
+
+    try:
+        response = current_text_model.generate_content(prompt)
+
+        generated_tweet_text = ""
+        grounding_info_to_return = None
+
+        if hasattr(response, 'text') and response.text:
+            generated_tweet_text = response.text
+        elif response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, 'text'): # part に text 属性があるか確認
+                    generated_tweet_text += part.text
+
+        # Ln 2400 付近の grounding_metadata 関連
+        if use_Google_Search_flag and response.candidates and \
+           hasattr(response.candidates[0], 'grounding_metadata') and \
+           response.candidates[0].grounding_metadata is not None:
+            
+            grounding_metadata = response.candidates[0].grounding_metadata
+            if hasattr(grounding_metadata, 'citations') and \
+               grounding_metadata.citations:
+                grounding_info_to_return = []
+                for c in grounding_metadata.citations:
+                    citation_info = {
+                        "uri": getattr(c, 'uri', None), 
+                        "title": getattr(c, 'title', None)
+                    }
+                    # publication_date の処理をより安全に
+                    pub_date_attr = getattr(c, 'publication_date', None)
+                    if pub_date_attr:
+                        if isinstance(pub_date_attr, (datetime.datetime, datetime.date)):
+                            citation_info["publication_date"] = pub_date_attr.isoformat()
+                        else:
+                            citation_info["publication_date"] = str(pub_date_attr)
+                    else:
+                        citation_info["publication_date"] = None
+                    grounding_info_to_return.append(citation_info)
+            elif hasattr(grounding_metadata, 'web_search_queries') and \
+                 grounding_metadata.web_search_queries:
+                 grounding_info_to_return = {"retrieved_queries": grounding_metadata.web_search_queries}
+            # 他の grounding_metadata の構造も考慮する場合はここに追加
+
+        if not generated_tweet_text:
+            error_feedback_message = "AIからの応答が空か、期待した形式ではありませんでした。"
+            if hasattr(response, 'prompt_feedback') and response.prompt_feedback:
+                feedback_obj = response.prompt_feedback
+                if hasattr(feedback_obj, 'block_reason') and feedback_obj.block_reason:
+                     error_feedback_message = f"AI応答エラー: ブロックされました。理由: {feedback_obj.block_reason}"
+                     if hasattr(feedback_obj, 'block_reason_message') and feedback_obj.block_reason_message:
+                         error_feedback_message += f" (詳細: {feedback_obj.block_reason_message})"
+                else:
+                    error_feedback_message = f"AI応答フィードバック: {str(feedback_obj)}"
+                print(f"!!! AI generation failed with feedback: {error_feedback_message}")
+            elif hasattr(response, 'candidates') and response.candidates and hasattr(response.candidates[0], 'finish_reason'):
+                 error_feedback_message += f" 処理終了理由: {str(response.candidates[0].finish_reason)}."
+            
+            # レスポンスオブジェクトの他の部分も確認してログに出力
+            full_response_str = ""
+            try:
+                full_response_str = str(response)
+            except Exception as e_str:
+                full_response_str = f"(Failed to stringify response: {e_str})"
+            print(f"!!! AI response does not contain usable text. Full response (or parts): {full_response_str[:500]}")
+            return jsonify({"message": f"AIによるツイート生成に失敗しました: {error_feedback_message}", "generated_tweet": None}), 500
+            
+        print(f">>> AI Generated Initial Tweet: {generated_tweet_text.strip()}")
+        if grounding_info_to_return:
+            print(f"    Grounding Info Preview: {str(grounding_info_to_return)[:200]}...")
+        
+        return jsonify({
+            "generated_tweet": generated_tweet_text.strip(),
+            "grounding_info": grounding_info_to_return 
+        }), 200
+
+    except Exception as e:
+        print(f"!!! Exception during AI initial tweet generation: {e}")
+        traceback.print_exc()
+        error_details = f"Type: {type(e).__name__}, Message: {str(e)}"
+        model_name_for_error = current_text_model._model_name if current_text_model and hasattr(current_text_model, '_model_name') else 'N/A'
+        
+        # エラーメッセージを具体的にする試み (前回と同様)
+        if hasattr(e, 'args') and e.args and isinstance(e.args[0], str):
+            error_msg_lower = e.args[0].lower()
+            if "deadline exceeded" in error_msg_lower or "503" in error_msg_lower:
+                error_details = "AIサービスが時間内に応答しませんでした。ネットワーク環境を確認するか、時間を置いて再度お試しください。"
+            elif "api key not valid" in error_msg_lower or "permission_denied" in error_msg_lower:
+                error_details = "AIサービスのAPIキーが無効か、権限がありません。設定を確認してください。"
+            elif "tools argument is not supported" in error_msg_lower or ("tool" in error_msg_lower and "not supported" in error_msg_lower):
+                error_details = f"選択されたAIモデル ({model_name_for_error}) は、Google検索ツールの使用をサポートしていない可能性があります。エラー詳細: {str(e)}"
+            elif "invalid json payload" in error_msg_lower:
+                error_details = f"AIサービスへのリクエスト形式に誤りがあります。開発者にご連絡ください。詳細: {str(e)}"
+        
+        return jsonify({"message": "AIによる初期ツイート生成中に予期せぬエラーが発生しました。", "error": error_details}), 500
 
 # Flaskサーバーの起動
 if __name__ == '__main__':

@@ -1,7 +1,8 @@
 // src/app/mypage/account-strategy/page.tsx
+
 'use client';
 
-import React, { useEffect, useState, FormEvent, ChangeEvent, useCallback } from 'react'; // useCallback をインポート
+import React, { useEffect, useState, FormEvent, ChangeEvent, useCallback } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -9,7 +10,7 @@ import axios from 'axios';
 import { supabase } from '@/lib/supabaseClient';
 import { toast } from 'react-hot-toast';
 
-// --- 型定義 (前回と同様) ---
+// --- 型定義 ---
 export type TargetAudienceItem = {
   id?: string; name: string; age: string; 悩み: string;
 };
@@ -29,7 +30,7 @@ export type AccountStrategyFormData = {
   edu_r5_output_encouragement_base: string; edu_r6_baseline_shift_base: string;
 };
 export const initialAccountStrategyFormData: AccountStrategyFormData = {
-  username: '', website: '', preferred_ai_model: 'gemini-1.5-flash-latest',
+  username: '', website: '', preferred_ai_model: 'gemini-2.5-flash-preview-05-20',
   x_api_key: null, x_api_secret_key: null, x_access_token: null, x_access_token_secret: null,
   account_purpose: '', main_target_audience: [{ id: Date.now().toString(), name: '', age: '', 悩み: '' }],
   core_value_proposition: '', brand_voice_detail: { tone: '', keywords: [''], ng_words: [''] },
@@ -41,8 +42,8 @@ export const initialAccountStrategyFormData: AccountStrategyFormData = {
   edu_r5_output_encouragement_base: '', edu_r6_baseline_shift_base: '',
 };
 const aiModelOptions = [
-  { value: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash (高速・標準)' },
-  { value: 'gemini-1.5-pro-latest', label: 'Gemini 1.5 Pro (高性能・高品質)' },
+  { value: 'gemini-2.5-flash-preview-05-20', label: 'Gemini 2.5 Flash (高速・標準)' },
+  { value: 'gemini-2.5-pro-preview-05-06', label: 'Gemini 2.5 Pro (高性能・高品質)' },
 ];
 type ChatMessage = {
   role: 'user' | 'model'; parts: { text: string }[];
@@ -97,7 +98,6 @@ export default function AccountStrategyPage() {
     }
   }, [user, authLoading, router]);
 
-  // ★ 修正点1: fetchProfileData を useCallback でラップし、コンポーネントスコープに移動
   const fetchProfileData = useCallback(async () => {
     if (user && !authLoading) {
       setIsLoadingData(true);
@@ -155,10 +155,9 @@ export default function AccountStrategyPage() {
              if (error.response.status === 401 && signOut) {
                   await signOut(); 
                   router.push('/login');
-             } else if (error.response.status === 404) { //
-                  // ★ 修正点2: toast.info を toast() に変更
-                  toast("プロフィールデータがまだありません。新規作成してください。", { icon: 'ℹ️' }); //
-                  setFormData(initialAccountStrategyFormData); //
+             } else if (error.response.status === 404) {
+                  toast("プロフィールデータがまだありません。新規作成してください。", { icon: 'ℹ️' });
+                  setFormData(initialAccountStrategyFormData);
              }
         } else if (error instanceof Error) {
              errorMessage = error.message;
@@ -171,11 +170,11 @@ export default function AccountStrategyPage() {
         setIsLoadingData(false);
       }
     }
-  }, [user, authLoading, router, signOut]); // signOutを依存配列に追加
+  }, [user, authLoading, router, signOut]); 
 
   useEffect(() => {
     fetchProfileData();
-  }, [fetchProfileData]); // fetchProfileDataが安定したら呼び出す
+  }, [fetchProfileData]); 
 
 
   const handleInputChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
@@ -212,7 +211,7 @@ export default function AccountStrategyPage() {
     setFormData(prev => ({ ...prev, main_target_audience: updatedAudiences }));
   };
 
-  const handleSubmit = async (e: FormEvent) => { //
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) { toast.error('認証されていません。'); return; }
     if (!formData.username.trim()) { toast.error('ユーザー名は必須です。'); return; }
@@ -221,35 +220,34 @@ export default function AccountStrategyPage() {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) throw new Error("セッションが見つかりません。");
-      const payloadToSubmit: Partial<AccountStrategyFormData> = { //
+      const payloadToSubmit: Partial<AccountStrategyFormData> = { 
         ...formData,
-        brand_voice_detail: { //
-            ...formData.brand_voice_detail, //
-            keywords: formData.brand_voice_detail.keywords.filter(kw => kw.trim() !== ''), //
-            ng_words: formData.brand_voice_detail.ng_words.filter(kw => kw.trim() !== ''), //
-        }, //
-        main_target_audience: formData.main_target_audience //
-            ? formData.main_target_audience.filter( //
-                p => p.name.trim() !== '' || p.age.trim() !== '' || p.悩み.trim() !== '' //
-              ) //
-            : null, //
-      }; //
-      if (payloadToSubmit.main_target_audience?.length === 0) { //
-        payloadToSubmit.main_target_audience = null; //
-      } //
-      await axios.put('http://localhost:5001/api/v1/profile', payloadToSubmit, { headers: { Authorization: `Bearer ${session.access_token}` } }); //
-      toast.success('アカウント戦略を保存しました！'); //
-      fetchProfileData();  // ★ 修正点1: 保存後にデータを再フェッチ
-    } catch (error: unknown) { //
-      console.error('アカウント戦略保存エラー:', error); //
-      let errorMessage = 'アカウント戦略の保存に失敗しました。'; //
-      if (axios.isAxiosError(error) && error.response) { errorMessage = error.response.data?.message || error.message || errorMessage; //
-      } else if (error instanceof Error) { errorMessage = error.message; } //
-      setApiError(errorMessage); toast.error(errorMessage); //
-    } finally { setIsSubmitting(false); } //
+        brand_voice_detail: { 
+            ...formData.brand_voice_detail, 
+            keywords: formData.brand_voice_detail.keywords.filter(kw => kw.trim() !== ''), 
+            ng_words: formData.brand_voice_detail.ng_words.filter(kw => kw.trim() !== ''), 
+        }, 
+        main_target_audience: formData.main_target_audience 
+            ? formData.main_target_audience.filter( 
+                p => p.name.trim() !== '' || p.age.trim() !== '' || p.悩み.trim() !== '' 
+              ) 
+            : null, 
+      }; 
+      if (payloadToSubmit.main_target_audience?.length === 0) { 
+        payloadToSubmit.main_target_audience = null; 
+      } 
+      await axios.put('http://localhost:5001/api/v1/profile', payloadToSubmit, { headers: { Authorization: `Bearer ${session.access_token}` } }); 
+      toast.success('アカウント戦略を保存しました！'); 
+      fetchProfileData();  
+    } catch (error: unknown) { 
+      console.error('アカウント戦略保存エラー:', error); 
+      let errorMessage = 'アカウント戦略の保存に失敗しました。'; 
+      if (axios.isAxiosError(error) && error.response) { errorMessage = error.response.data?.message || error.message || errorMessage; 
+      } else if (error instanceof Error) { errorMessage = error.message; } 
+      setApiError(errorMessage); toast.error(errorMessage); 
+    } finally { setIsSubmitting(false); } 
   };
 
-  // ... (handleSuggestWithAI, handleGenerateBasePoliciesDraft, openAiChat は前回提示のコード) ...
   const handleSuggestWithAI = async (
     targetField: keyof AccountStrategyFormData | 'main_target_audience_item',
     apiEndpoint: string,
@@ -392,7 +390,7 @@ export default function AccountStrategyPage() {
     setIsChatModalOpen(true);
   };
 
-  const handleSendAccountStrategyChatMessage = async () => { /* ...前回提示したコードと同一... */ //
+  const handleSendAccountStrategyChatMessage = async () => { 
     if (!currentUserChatMessage.trim() || !chatTargetFieldKey) return;
     const newMessage: ChatMessage = { role: 'user', parts: [{ text: currentUserChatMessage.trim() }] };
     const updatedChatHistory = [...chatHistory, newMessage];
@@ -441,24 +439,23 @@ export default function AccountStrategyPage() {
     }
   };
 
-  const applyChatResultToAccountStrategyForm = () => { //
-    if (chatTargetFieldKey) { //
-      const lastAiMessage = chatHistory.filter(m => m.role === 'model').pop()?.parts[0]?.text; //
-      if (lastAiMessage) { //
-        if (chatTargetFieldKey === 'main_target_audience') { //
-            // ★ 修正点2: toast.info を toast() に変更
-            toast("ペルソナのチャット結果の反映は、現在手動コピー＆ペーストで行ってください。AIの提案を参考に各項目を更新してください。", { icon: 'ℹ️' }); //
-        } else { //
-            setFormData(prev => ({...prev, [chatTargetFieldKey]: lastAiMessage})); //
+  const applyChatResultToAccountStrategyForm = () => { 
+    if (chatTargetFieldKey) { 
+      const lastAiMessage = chatHistory.filter(m => m.role === 'model').pop()?.parts[0]?.text; 
+      if (lastAiMessage) { 
+        if (chatTargetFieldKey === 'main_target_audience') { 
+            toast("ペルソナのチャット結果の反映は、現在手動コピー＆ペーストで行ってください。AIの提案を参考に各項目を更新してください。", { icon: 'ℹ️' }); 
+        } else { 
+            setFormData(prev => ({...prev, [chatTargetFieldKey]: lastAiMessage})); 
         }
-        toast.success(`「${chatTargetFieldLabel}」にAIの提案を反映しました。内容を確認・調整してください。`); //
+        toast.success(`「${chatTargetFieldLabel}」にAIの提案を反映しました。内容を確認・調整してください。`); 
       }
-    } //
-    setIsChatModalOpen(false); //
+    } 
+    setIsChatModalOpen(false); 
   };
 
 
-  if (authLoading || isLoadingData) { /* ...ローディング表示... */ 
+  if (authLoading || isLoadingData) { 
       return (
       <div className="flex justify-center items-center min-h-[calc(100vh-200px)]">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600"></div>
@@ -466,7 +463,7 @@ export default function AccountStrategyPage() {
       </div>
     );
   }
-  if (!user) { /* ...ログイン誘導... */ 
+  if (!user) { 
       return (
         <div className="flex justify-center items-center min-h-[calc(100vh-200px)]">
             <p className="text-lg text-gray-600">ログインページへリダイレクトします...</p>
@@ -487,9 +484,9 @@ export default function AccountStrategyPage() {
     currentKeywordsForAiSuggest?: string
   ) => (
     <div className="p-4 border rounded-lg shadow-sm bg-slate-50 mb-4">
-        <div className="flex flex-wrap justify-between items-center mb-1 gap-y-2"> {/* gap-y-2で改行時も調整 */}
+        <div className="flex flex-wrap justify-between items-center mb-1 gap-y-2">
             <label htmlFor={name} className="block text-sm font-semibold text-gray-700 basis-full sm:basis-auto">{label}</label>
-            <div className="flex space-x-2 flex-wrap gap-y-1"> {/* AIボタンも改行対応 */}
+            <div className="flex space-x-2 flex-wrap gap-y-1">
                 {aiSuggestEndpoint && setLoadingAiSuggest && (
                      <>
                         {inputForAiSuggestSetter !== undefined && currentKeywordsForAiSuggest !== undefined && (
@@ -697,18 +694,24 @@ export default function AccountStrategyPage() {
             </div>
             <div className={`${fieldSetClass} grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1`}>
                 <p className="text-sm text-gray-500 md:col-span-2 mb-3">各教育要素について、あなたのアカウント全体としての基本的な考え方やアプローチ、メッセージの方向性を記述してください。これが各ローンチ戦略の土台となります。</p>
-                {basePolicyElementsDefinition.map(element =>
-                    renderTextAreaWithAi(
-                        element.key as keyof AccountStrategyFormData,
-                        element.label,
-                        4,
-                        formData[element.key as keyof AccountStrategyFormData] ? '' : element.description,
-                        formData[element.key as keyof AccountStrategyFormData] ? element.description : undefined,
-                        undefined, 
-                        undefined, 
-                        undefined
-                    )
-                )}
+                {basePolicyElementsDefinition.map(element => {
+                     // ★ 修正: ここでユニークなキーを生成して渡す
+                    const uniqueKey = element.key as string;
+                    return (
+                        <div key={uniqueKey}> {/* mapの各要素にkeyを追加 */}
+                           {renderTextAreaWithAi(
+                                element.key as keyof AccountStrategyFormData,
+                                element.label,
+                                4,
+                                formData[element.key as keyof AccountStrategyFormData] ? '' : element.description,
+                                formData[element.key as keyof AccountStrategyFormData] ? element.description : undefined,
+                                undefined, 
+                                undefined, 
+                                undefined
+                            )}
+                        </div>
+                    );
+                })}
             </div>
         </section>
 

@@ -1,16 +1,17 @@
+// src/components/header.tsx
 'use client'
 
-import { useAuth } from '@/context/AuthContext' //
+import { useAuth } from '@/context/AuthContext' 
 import Link from 'next/link'
-import { useRouter } from 'next/navigation' // ログアウト後のリダイレクト用
+import { useRouter } from 'next/navigation' 
 
 export default function Header() {
-  const { user, signOut, loading } = useAuth() // loading は認証状態のローディング
+  const { user, signOut, loading } = useAuth() 
   const router = useRouter()
 
   const handleSignOut = async () => {
     await signOut()
-    router.push('/login') // ログアウト後にログインページへリダイレクト
+    router.push('/login') 
   }
 
   return (
@@ -61,12 +62,18 @@ export default function Header() {
                 </Link>
                 {/* ===== ここから追加 ===== */}
                 <Link
-                  href="/tweets" // 新しい「ツイート管理」ページへのパス
+                  href="/initial-post-generator" // 新しい「初期投稿生成ページ」へのパス
+                  className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+                >
+                  初期投稿生成
+                </Link>
+                {/* ===== ここまで追加 ===== */}
+                <Link
+                  href="/tweets" 
                   className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
                 >
                   ツイート管理
                 </Link>
-                {/* ===== ここまで追加 ===== */}
                 <button
                   onClick={handleSignOut}
                   className="px-3 sm:px-4 py-2 border border-transparent text-xs sm:text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
