@@ -1562,6 +1562,8 @@ def generate_strategy_draft(launch_id):
 # プロンプトの内容に反映させる修正を行ってください。
 
 # --- ツイート管理API ---
+# in sakuya11k/eds-project/eds-project-feature-account-strategy-page/backend/app.py
+
 @app.route('/api/v1/tweets', methods=['POST'])
 @token_required
 def save_tweet_draft():
@@ -1580,9 +1582,14 @@ def save_tweet_draft():
     launch_id_fk = data.get('launch_id')
     notes_int = data.get('notes_internal')
     
+    # ▼▼▼ここから追加▼▼▼
+    image_urls = data.get('image_urls', []) # フロントエンドから送られてくる画像URLの配列
+    # ▲▲▲ここまで追加▲▲▲
+
     scheduled_at_ts = None
     if scheduled_at_str:
         try:
+            # ... (日付変換処理は既存のまま)
             if 'T' in scheduled_at_str and not scheduled_at_str.endswith('Z'):
                  dt_obj_naive = datetime.datetime.fromisoformat(scheduled_at_str)
                  dt_obj_utc = dt_obj_naive.astimezone(datetime.timezone.utc)
@@ -1591,7 +1598,7 @@ def save_tweet_draft():
             scheduled_at_ts = dt_obj_utc.isoformat()
         except ValueError as ve: 
             print(f"!!! Invalid scheduled_at format: {scheduled_at_str}. Error: {ve}")
-            return jsonify({"message": f"Invalid scheduled_at format: {scheduled_at_str}. Use ISO 8601 (e.g., YYYY-MM-DDTHH:MM:SSZ)."}), 400
+            return jsonify({"message": f"Invalid scheduled_at format: {scheduled_at_str}. Use ISO 8601 (e.g., yyyy-MM-ddTHH:mm:ssZ)."}), 400
     
     try:
         if not supabase: return jsonify({"message": "Supabase client not initialized!"}), 500
@@ -1602,7 +1609,8 @@ def save_tweet_draft():
             "scheduled_at": scheduled_at_ts, 
             "education_element_key": edu_el_key, 
             "launch_id": launch_id_fk, 
-            "notes_internal": notes_int
+            "notes_internal": notes_int,
+            "image_urls": image_urls # ★★★ image_urlsをDB保存データに含める ★★★
         }
         payload_to_insert = new_tweet_data
 
@@ -1622,6 +1630,8 @@ def save_tweet_draft():
 
 
 # --- ★ ここから予約投稿実行APIを追加 ★ ---
+# sakuya11k/eds-project/eds-project-feature-account-strategy-page/backend/app.py
+
 @app.route('/api/v1/tweets/execute-scheduled', methods=['POST'])
 def execute_scheduled_tweets():
     # (推奨) Cronジョブからのリクエストを認証
@@ -1644,20 +1654,9 @@ def execute_scheduled_tweets():
         # 現在時刻より前の、ステータスが 'scheduled' のツイートを取得
         now_utc_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
         
-        # scheduled_at が null でないこと、かつ現在時刻以前であることを確認
-        # Supabaseのクエリでは、直接的な時刻比較が文字列型に対して難しい場合があるため、
-        # 取得後にPython側でフィルタリングすることも検討するか、DBの型をtimestampにする。
-        # ここでは、まず 'scheduled' のものを取得し、Python側で時刻比較する方針も考えられるが、
-        # まずはDBクエリで絞り込みを試みる。
-        # 注意: 'lte' (less than or equal) を使うために scheduled_at は timestamp 型である方が望ましい。
-        #       もし text 型なら、このクエリは期待通りに動かない可能性がある。
-        #       text型の場合は、一旦広めに取得してPython側で正確にフィルタリングする。
-        
-        # 仮にscheduled_atがISO文字列としてtext型に保存されている場合、
-        # 一旦'scheduled'のものを取得し、Python側でパースして比較する方が安全かもしれません。
-        # ここでは、まずDBにフィルタを試みる形にします。
+        # image_urls カラムと、profiles テーブルの関連情報も取得
         scheduled_tweets_res = supabase.table('tweets').select(
-            "*, profiles(x_api_key, x_api_secret_key, x_access_token, x_access_token_secret)" # ユーザーの認証情報をJOIN
+            "*, profiles(x_api_key, x_api_secret_key, x_access_token, x_access_token_secret), image_urls"
         ).eq('status', 'scheduled').lte('scheduled_at', now_utc_str).execute()
 
         if hasattr(scheduled_tweets_res, 'error') and scheduled_tweets_res.error:
@@ -1675,7 +1674,8 @@ def execute_scheduled_tweets():
             tweet_id = tweet_data.get('id')
             user_id = tweet_data.get('user_id')
             content = tweet_data.get('content')
-            profile_data = tweet_data.get('profiles') # JOINされたprofilesテーブルのデータ
+            profile_data = tweet_data.get('profiles')
+            image_urls = tweet_data.get('image_urls', [])
 
             if not content:
                 print(f"--- Tweet ID {tweet_id} for user {user_id} has no content. Skipping and marking as error.")
@@ -1698,6 +1698,50 @@ def execute_scheduled_tweets():
                 failed_posts += 1
                 processed_tweets.append({"id": tweet_id, "status": "error", "reason": "Profile/API keys not found"})
                 continue
+            
+            media_ids = []
+            if image_urls and isinstance(image_urls, list):
+                try:
+                    consumer_key = profile_data.get('x_api_key')
+                    consumer_secret = profile_data.get('x_api_secret_key')
+                    access_token = profile_data.get('x_access_token')
+                    access_token_secret = profile_data.get('x_access_token_secret')
+
+                    if not all([consumer_key, consumer_secret, access_token, access_token_secret]):
+                        raise Exception("X API v1.1 credentials for media upload are missing.")
+
+                    auth_v1 = tweepy.OAuth1UserHandler(consumer_key, consumer_secret, access_token, access_token_secret)
+                    api_v1 = tweepy.API(auth_v1)
+                    
+                    import requests
+                    import tempfile
+                    import os
+
+                    for url in image_urls:
+                        try:
+                            response = requests.get(url, stream=True)
+                            response.raise_for_status()
+                            with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+                                for chunk in response.iter_content(chunk_size=8192):
+                                    tmp.write(chunk)
+                                tmp_filename = tmp.name
+                            print(f"--- Uploading media from {url} for tweet {tweet_id}...")
+                            media = api_v1.media_upload(filename=tmp_filename)
+                            media_ids.append(media.media_id_string)
+                            print(f"--- Media uploaded for tweet {tweet_id}, media_id: {media.media_id_string}")
+                        finally:
+                            if 'tmp_filename' in locals() and os.path.exists(tmp_filename):
+                                os.remove(tmp_filename)
+                except Exception as e_media:
+                    print(f"!!! Media upload failed for tweet {tweet_id}: {e_media}")
+                    supabase.table('tweets').update({
+                        "status": "error", 
+                        "error_message": f"Media upload failed: {str(e_media)}",
+                        "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                    }).eq('id', tweet_id).execute()
+                    failed_posts += 1
+                    processed_tweets.append({"id": tweet_id, "status": "error", "reason": "Media upload failed"})
+                    continue
 
             api_client_v2 = get_x_api_client(profile_data)
             if not api_client_v2:
@@ -1712,8 +1756,11 @@ def execute_scheduled_tweets():
                 continue
             
             try:
-                print(f">>> Attempting to post tweet ID {tweet_id} to X for user {user_id}...")
-                created_x_tweet_response = api_client_v2.create_tweet(text=content)
+                print(f">>> Attempting to post tweet ID {tweet_id} to X for user {user_id} with media_ids: {media_ids}...")
+                created_x_tweet_response = api_client_v2.create_tweet(
+                    text=content,
+                    media_ids=media_ids if media_ids else None
+                )
                 
                 x_tweet_id_str = None
                 if created_x_tweet_response.data and created_x_tweet_response.data.get('id'):
@@ -1724,13 +1771,12 @@ def execute_scheduled_tweets():
                         "status": "posted",
                         "posted_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                         "x_tweet_id": x_tweet_id_str,
-                        "error_message": None, # エラーが解消された場合クリア
+                        "error_message": None,
                         "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
                     }).eq('id', tweet_id).execute()
                     successful_posts += 1
                     processed_tweets.append({"id": tweet_id, "status": "posted", "x_tweet_id": x_tweet_id_str})
                 else:
-                    # X APIからのエラーレスポンスの処理 (post_tweet_now から流用)
                     error_detail_x = "Unknown error or unexpected response structure from X API v2 while posting."
                     if hasattr(created_x_tweet_response, 'errors') and created_x_tweet_response.errors:
                         error_detail_x = str(created_x_tweet_response.errors)
@@ -1748,7 +1794,6 @@ def execute_scheduled_tweets():
 
             except tweepy.TweepyException as e_tweepy:
                 error_message = str(e_tweepy)
-                # TweepyExceptionのエラーメッセージ整形 (post_tweet_now から流用)
                 if hasattr(e_tweepy, 'response') and e_tweepy.response is not None:
                     try:
                         error_json = e_tweepy.response.json()
@@ -1832,6 +1877,8 @@ def get_saved_tweets():
         return jsonify({"message": "Error fetching tweets", "error": str(e)}), 500
 
 # --- ★ ここからツイート更新API ★ ---
+# sakuya11k/eds-project/eds-project-feature-account-strategy-page/backend/app.py
+
 @app.route('/api/v1/tweets/<uuid:tweet_id_param>', methods=['PUT'])
 @token_required
 def update_tweet(tweet_id_param):
@@ -1845,7 +1892,9 @@ def update_tweet(tweet_id_param):
 
     print(f">>> PUT /api/v1/tweets/{tweet_id_param} called by user_id: {user_id} with data: {data}")
 
-    allowed_update_fields = ['content', 'status', 'scheduled_at', 'education_element_key', 'launch_id', 'notes_internal']
+    # ▼▼▼ここを修正▼▼▼
+    allowed_update_fields = ['content', 'status', 'scheduled_at', 'education_element_key', 'launch_id', 'notes_internal', 'image_urls']
+    # ▲▲▲ここを修正▲▲▲
     payload_to_update = {}
     
     for field in allowed_update_fields:
@@ -1868,7 +1917,7 @@ def update_tweet(tweet_id_param):
                 payload_to_update['scheduled_at'] = dt_obj_utc.isoformat()
             except ValueError as ve:
                 print(f"!!! Invalid scheduled_at format during update for tweet {tweet_id_param}: {scheduled_at_str}. Error: {ve}")
-                return jsonify({"message": f"Invalid scheduled_at format: {scheduled_at_str}. Use ISO 8601 (e.g., YYYY-MM-DDTHH:MM:SSZ)."}), 400
+                return jsonify({"message": f"Invalid scheduled_at format: {scheduled_at_str}. Use ISO 8601 (e.g., รายละเอียด-MM-DDTHH:MM:SSZ)."}), 400
         else: 
             payload_to_update['scheduled_at'] = None
 
@@ -1906,7 +1955,6 @@ def update_tweet(tweet_id_param):
     except Exception as e:
         print(f"!!! Exception updating tweet {tweet_id_param}: {e}"); traceback.print_exc()
         return jsonify({"message": "An unexpected error occurred while updating the tweet", "error": str(e)}), 500
-# --- ツイート更新APIはここまで ★ ---
 
 # --- ★ ここからツイート削除APIを追加 ★ ---
 @app.route('/api/v1/tweets/<uuid:tweet_id_param>', methods=['DELETE'])
@@ -1951,11 +1999,13 @@ def delete_tweet(tweet_id_param):
 # --- ツイート削除APIはここまで ★ ---
 
 # --- ★ ここからツイート即時投稿APIを追加 ★ ---
+# sakuya11k/eds-project/eds-project-feature-account-strategy-page/backend/app.py
+
 @app.route('/api/v1/tweets/<uuid:tweet_id_param>/post-now', methods=['POST'])
 @token_required
 def post_tweet_now(tweet_id_param):
     user = getattr(g, 'user', None)
-    user_id = user.id # token_required で user は存在するはず
+    user_id = user.id
     user_profile = getattr(g, 'profile', {})
 
     print(f">>> POST /api/v1/tweets/{tweet_id_param}/post-now called by user_id: {user_id}")
@@ -1965,8 +2015,8 @@ def post_tweet_now(tweet_id_param):
         return jsonify({"message": "Supabase client not initialized!"}), 500
 
     try:
-        # 1. 投稿対象のツイートをDBから取得し、ユーザー所有か確認
-        tweet_to_post_res = supabase.table('tweets').select('id, user_id, content, status').eq('id', tweet_id_param).eq('user_id', user_id).maybe_single().execute()
+        # DBからimage_urlsを含むツイート情報を取得
+        tweet_to_post_res = supabase.table('tweets').select('id, user_id, content, status, image_urls').eq('id', tweet_id_param).eq('user_id', user_id).maybe_single().execute()
 
         if not tweet_to_post_res.data:
             print(f"!!! Tweet {tweet_id_param} not found or access denied for user {user_id} during post-now.")
@@ -1974,23 +2024,58 @@ def post_tweet_now(tweet_id_param):
         
         tweet_data = tweet_to_post_res.data
         tweet_content = tweet_data.get('content')
-
+        image_urls = tweet_data.get('image_urls', [])
+        
         if not tweet_content:
             print(f"!!! Tweet {tweet_id_param} has no content to post for user {user_id}.")
             return jsonify({"message": "Tweet content is empty, cannot post."}), 400
         
-        # (任意)既に投稿済みならエラーにするか、再投稿を許可するかなどの制御
-        # if tweet_data.get('status') == 'posted':
-        #     return jsonify({"message": "This tweet has already been posted.", "x_tweet_id": tweet_data.get('x_tweet_id')}), 409 # Conflict
+        # ▼▼▼ メディアアップロード処理 ▼▼▼
+        media_ids = []
+        if image_urls and isinstance(image_urls, list):
+            consumer_key = user_profile.get('x_api_key')
+            consumer_secret = user_profile.get('x_api_secret_key')
+            access_token = user_profile.get('x_access_token')
+            access_token_secret = user_profile.get('x_access_token_secret')
 
-        # 2. X APIクライアントを取得
+            if not all([consumer_key, consumer_secret, access_token, access_token_secret]):
+                raise Exception("X API v1.1 credentials for media upload are missing in user profile.")
+
+            auth_v1 = tweepy.OAuth1UserHandler(consumer_key, consumer_secret, access_token, access_token_secret)
+            api_v1 = tweepy.API(auth_v1)
+            
+            import requests
+            import tempfile
+            import os
+
+            for url in image_urls:
+                try:
+                    response = requests.get(url, stream=True)
+                    response.raise_for_status()
+                    
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            tmp.write(chunk)
+                        tmp_filename = tmp.name
+                    
+                    print(f"--- Uploading media from {url} to X...")
+                    media = api_v1.media_upload(filename=tmp_filename)
+                    media_ids.append(media.media_id_string)
+                    print(f"--- Media uploaded, media_id: {media.media_id_string}")
+                finally:
+                    if 'tmp_filename' in locals() and os.path.exists(tmp_filename):
+                        os.remove(tmp_filename)
+        # ▲▲▲ メディアアップロード処理ここまで ▲▲▲
+
         api_client_v2 = get_x_api_client(user_profile)
         if not api_client_v2:
             return jsonify({"message": "Failed to initialize X API client. Check credentials in MyPage or X API version compatibility."}), 500
 
-        # 3. Xにツイートを投稿
-        print(f">>> Attempting to post tweet_id: {tweet_id_param} to X for user_id: {user_id}. Content: {tweet_content[:50]}...")
-        created_x_tweet_response = api_client_v2.create_tweet(text=tweet_content)
+        print(f">>> Attempting to post tweet_id: {tweet_id_param} to X for user_id: {user_id} with media_ids: {media_ids}. Content: {tweet_content[:50]}...")
+        created_x_tweet_response = api_client_v2.create_tweet(
+            text=tweet_content,
+            media_ids=media_ids if media_ids else None
+        )
         
         x_tweet_id_str = None
         if created_x_tweet_response.data and created_x_tweet_response.data.get('id'):
@@ -2003,9 +2088,9 @@ def post_tweet_now(tweet_id_param):
             elif hasattr(created_x_tweet_response, 'reason'): 
                 error_detail_x = created_x_tweet_response.reason
             print(f"!!! Error in X API v2 tweet creation response for user_id {user_id}, tweet_id {tweet_id_param}: {error_detail_x}")
-            return jsonify({"message": "Failed to post tweet to X.", "error_detail_from_x": error_detail_x}), 502 # Bad Gateway or use custom code
+            return jsonify({"message": "Failed to post tweet to X.", "error_detail_from_x": error_detail_x}), 502
 
-        # 4. DBのツイート情報を更新 (ステータス、XのツイートID、投稿日時)
+        # ▼▼▼【省略しない部分】投稿成功後のDB更新とレスポンス処理 ▼▼▼
         now_utc = datetime.datetime.now(datetime.timezone.utc)
         update_payload = {
             "status": "posted",
@@ -2018,7 +2103,6 @@ def post_tweet_now(tweet_id_param):
 
         if hasattr(db_update_res, 'error') and db_update_res.error:
             print(f"!!! Tweet {tweet_id_param} posted to X (ID: {x_tweet_id_str}), but failed to update DB status: {db_update_res.error}")
-            # Xには投稿成功したがDB更新失敗。この状態をどう扱うか検討が必要（例：エラーログに残し手動対応を促すなど）
             return jsonify({
                 "message": "Tweet posted to X successfully, but failed to update its status in the database.", 
                 "x_tweet_id": x_tweet_id_str,
@@ -2031,13 +2115,12 @@ def post_tweet_now(tweet_id_param):
             print(f">>> Tweet {tweet_id_param} status updated in DB. Final data: {final_tweet_data_res.data}")
             return jsonify(final_tweet_data_res.data), 200
         else:
-            # ここに来ることは稀だが、DB更新後に再取得失敗した場合
             print(f"!!! Tweet {tweet_id_param} posted to X (ID: {x_tweet_id_str}) and DB update likely succeeded, but failed to re-fetch for confirmation.")
             return jsonify({
                 "message": "Tweet posted to X successfully and database status likely updated, but failed to retrieve final confirmation.",
                 "x_tweet_id": x_tweet_id_str
             }), 200
-
+        # ▲▲▲【省略しない部分】ここまで ▲▲▲
 
     except tweepy.TweepyException as e_tweepy: 
         error_message = str(e_tweepy)
@@ -2049,18 +2132,20 @@ def post_tweet_now(tweet_id_param):
                      error_message = f"X API Error: {error_json['errors'][0].get('message', str(e_tweepy))}"
                 elif 'title' in error_json: 
                      error_message = f"X API Error: {error_json['title']}: {error_json.get('detail', '')}"
-                elif hasattr(e_tweepy.response, 'data') and e_tweepy.response.data: # For 403 errors etc.
+                elif hasattr(e_tweepy.response, 'data') and e_tweepy.response.data:
                     error_message = f"X API Error (e.g., 403 Forbidden): {e_tweepy.response.data}"
+
             except ValueError: 
                 pass 
         elif hasattr(e_tweepy, 'api_codes') and hasattr(e_tweepy, 'api_messages'):
              error_message = f"X API Error {e_tweepy.api_codes}: {e_tweepy.api_messages}"
         traceback.print_exc()
-        return jsonify({"message": "Failed to post tweet to X (TweepyException).", "error": error_message}), 502 # Bad Gateway
+        return jsonify({"message": "Failed to post tweet to X (TweepyException).", "error": error_message}), 502
     except Exception as e: 
         print(f"!!! General Exception posting tweet_id {tweet_id_param} for user_id {user_id}: {e}")
         traceback.print_exc()
         return jsonify({"message": "An unexpected error occurred while posting the tweet.", "error": str(e)}), 500
+    
 # --- ツイート即時投稿APIはここまで ★ ---
 
 #generate_educational_tweet

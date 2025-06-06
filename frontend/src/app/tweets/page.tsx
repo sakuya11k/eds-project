@@ -1,15 +1,15 @@
 'use client'
 
-import React, { useEffect, useState, FormEvent } from 'react'
+import React, { useEffect, useState, FormEvent, ChangeEvent } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import axios from 'axios'
 import { supabase } from '@/lib/supabaseClient'
 import { toast } from 'react-hot-toast'
-import { PostCalendar } from '@/components/PostCalendar' // ★ PostCalendarコンポーネントをインポート
+import { PostCalendar } from '@/components/PostCalendar'
 
-// ★ Tweet型定義をエクスポートするように変更
+// Tweetの型定義に image_urls を追加
 export type Tweet = {
   id: string;
   user_id: string;
@@ -24,18 +24,17 @@ export type Tweet = {
   error_message?: string | null;
   created_at: string;
   updated_at: string;
+  image_urls?: string[] | null; // ★★★ 画像URLの配列。nullも許容
 }
 
-// 編集用フォームデータの型
-type TweetEditFormData = {
+// フォームデータの型定義を更新
+type TweetFormData = {
   content: string;
   scheduled_at: string;
+  image_urls: string[];
 }
 
-// アクティブなタブを管理する型
 type ActiveTab = 'draft' | 'scheduled' | 'posted' | 'error';
-
-// ★ 表示モードを管理する型 (新規追加)
 type ViewMode = 'list' | 'calendar';
 
 export default function TweetsPage() {
@@ -48,17 +47,21 @@ export default function TweetsPage() {
 
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [editingTweet, setEditingTweet] = useState<Tweet | null>(null)
-  const [editFormData, setEditFormData] = useState<TweetEditFormData>({
+  
+  // フォームデータ用のStateを更新
+  const [formData, setFormData] = useState<TweetFormData>({
     content: '',
     scheduled_at: '',
+    image_urls: [],
   })
-  const [isSubmittingEdit, setIsSubmittingEdit] = useState(false)
+
+  // 画像アップロード処理用のState
+  const [isUploading, setIsUploading] = useState(false);
+  
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [activeTab, setActiveTab] = useState<ActiveTab>('draft');
   const [isCancellingSchedule, setIsCancellingSchedule] = useState<string | null>(null);
-
-  // ★ 表示モードを管理するstate (新規追加)
   const [viewMode, setViewMode] = useState<ViewMode>('list');
-
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -105,99 +108,148 @@ export default function TweetsPage() {
     }
   }, [user, authLoading])
 
-  const handleEditTweet = (tweet: Tweet) => {
-    setEditingTweet(tweet)
-    let scheduledDateString = '';
-    if (tweet.scheduled_at) {
-        try {
-            const dateObj = new Date(tweet.scheduled_at);
-            const year = dateObj.getFullYear();
-            const month = (`0${dateObj.getMonth() + 1}`).slice(-2);
-            const day = (`0${dateObj.getDate()}`).slice(-2);
-            const hours = (`0${dateObj.getHours()}`).slice(-2);
-            const minutes = (`0${dateObj.getMinutes()}`).slice(-2);
-            scheduledDateString = `${year}-${month}-${day}T${hours}:${minutes}`;
-        } catch (e) {
-            console.warn("Error formatting scheduled_at for input: ", e);
-        }
+  const openTweetModal = (tweet: Tweet | null) => {
+    if (tweet) { // 編集の場合
+      setEditingTweet(tweet);
+      let scheduledDateString = '';
+      if (tweet.scheduled_at) {
+          try {
+              const dateObj = new Date(tweet.scheduled_at);
+              const year = dateObj.getFullYear();
+              const month = (`0${dateObj.getMonth() + 1}`).slice(-2);
+              const day = (`0${dateObj.getDate()}`).slice(-2);
+              const hours = (`0${dateObj.getHours()}`).slice(-2);
+              const minutes = (`0${dateObj.getMinutes()}`).slice(-2);
+              scheduledDateString = `${year}-${month}-${day}T${hours}:${minutes}`;
+          } catch (e) {
+              console.warn("Error formatting scheduled_at for input: ", e);
+          }
+      }
+      setFormData({
+        content: tweet.content,
+        scheduled_at: scheduledDateString,
+        image_urls: tweet.image_urls || [],
+      });
+    } else { // 新規作成の場合
+      setEditingTweet(null);
+      setFormData({
+        content: '',
+        scheduled_at: '',
+        image_urls: [],
+      });
     }
-    setEditFormData({
-      content: tweet.content,
-      scheduled_at: scheduledDateString,
-    })
-    setIsEditModalOpen(true)
-  }
-
-  const handleEditFormChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-    const { name, value } = e.target;
-    setEditFormData(prev => ({ ...prev, [name]: value as string }));
+    setIsEditModalOpen(true);
   };
 
-  const handleUpdateTweet = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!editingTweet || !user) {
-      toast.error('更新対象のツイートが見つからないか、認証されていません。');
+  const handleFormChange = (e: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleImageUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) {
       return;
     }
-    setIsSubmittingEdit(true);
+    if ((formData.image_urls.length + e.target.files.length) > 4) {
+      toast.error('画像は4枚までしかアップロードできません。');
+      return;
+    }
+    setIsUploading(true);
+    const files = Array.from(e.target.files);
+
+    const uploadedUrls: string[] = [];
+    for (const file of files) {
+      const filePath = `${user!.id}/${Date.now()}-${file.name}`;
+      try {
+        const { data, error } = await supabase.storage
+          .from('tweet-images')
+          .upload(filePath, file);
+
+        if (error) throw error;
+        
+        const { data: publicUrlData } = supabase.storage
+          .from('tweet-images')
+          .getPublicUrl(data.path);
+        
+        uploadedUrls.push(publicUrlData.publicUrl);
+      } catch (error: any) {
+        console.error('画像アップロードエラー:', error);
+        toast.error(`画像「${file.name}」のアップロードに失敗しました: ${error.message}`);
+        setIsUploading(false);
+        return;
+      }
+    }
+
+    setFormData(prev => ({ ...prev, image_urls: [...prev.image_urls, ...uploadedUrls] }));
+    setIsUploading(false);
+    toast.success(`${files.length}枚の画像をアップロードしました。`);
+  };
+
+  const removeImage = (index: number) => {
+    const newImageUrls = [...formData.image_urls];
+    newImageUrls.splice(index, 1);
+    setFormData(prev => ({ ...prev, image_urls: newImageUrls }));
+  };
+
+  const handleSaveTweet = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!user) {
+      toast.error('認証されていません。');
+      return;
+    }
+    setIsSubmitting(true);
     setError(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        throw new Error("セッションが見つかりません。再度ログインしてください。");
-      }
+      if (!session) throw new Error("セッションが見つかりません。");
+
       let scheduledAtISO: string | null = null;
-      if (editFormData.scheduled_at) {
-        try {
-            const localDate = new Date(editFormData.scheduled_at);
-            if (isNaN(localDate.getTime())) {
-                throw new Error("Invalid date value from input.");
-            }
-            scheduledAtISO = localDate.toISOString();
-        } catch (parseError) {
-            console.error("Invalid date format for scheduled_at:", editFormData.scheduled_at, parseError);
-            toast.error("予約日時の形式が正しくありません。");
-            setIsSubmittingEdit(false);
-            return;
-        }
+      if (formData.scheduled_at) {
+          const localDate = new Date(formData.scheduled_at);
+          if (isNaN(localDate.getTime())) throw new Error("Invalid date value from input.");
+          scheduledAtISO = localDate.toISOString();
       }
+
       const payload: Partial<Tweet> = {
-        content: editFormData.content,
+        content: formData.content,
         scheduled_at: scheduledAtISO,
+        image_urls: formData.image_urls,
       };
+
       if (editingTweet) {
         const originalStatus = editingTweet.status;
         if (scheduledAtISO) {
-          if (originalStatus === 'draft' || originalStatus === 'error') {
-            payload.status = 'scheduled';
-          }
+          if (originalStatus === 'draft' || originalStatus === 'error') payload.status = 'scheduled';
         } else {
-          if (originalStatus === 'scheduled') {
-            payload.status = 'draft';
-          }
+          if (originalStatus === 'scheduled') payload.status = 'draft';
         }
+
+        await axios.put(`http://localhost:5001/api/v1/tweets/${editingTweet.id}`, payload, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        toast.success('ツイートを更新しました。');
+      } else {
+        payload.status = scheduledAtISO ? 'scheduled' : 'draft';
+        await axios.post('http://localhost:5001/api/v1/tweets', payload, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        toast.success('ツイートを作成しました。');
       }
-      await axios.put(
-        `http://localhost:5001/api/v1/tweets/${editingTweet.id}`,
-        payload,
-        { headers: { Authorization: `Bearer ${session.access_token}` } }
-      );
-      toast.success('ツイートを更新しました。');
+
       setIsEditModalOpen(false);
-      setEditingTweet(null);
       fetchTweets();
     } catch (err: unknown) {
-      console.error('ツイート更新エラー:', err);
-      let errorMessage = 'ツイートの更新に失敗しました。';
+      console.error('ツイート保存/更新エラー:', err);
+      let errorMessage = 'ツイートの処理に失敗しました。';
        if (axios.isAxiosError(err) && err.response) {
            errorMessage = err.response.data?.message || err.message || errorMessage;
       } else if (err instanceof Error) {
            errorMessage = err.message;
       }
       setError(errorMessage);
-      toast.error('ツイートの更新に失敗しました。');
+      toast.error(errorMessage);
     } finally {
-      setIsSubmittingEdit(false);
+      setIsSubmitting(false);
     }
   };
 
@@ -319,12 +371,7 @@ export default function TweetsPage() {
     }
   };
 
-  // ★ リスト表示用のフィルタリングされたツイート
-  const filteredTweetsForList = tweets.filter(tweet => {
-    return tweet.status === activeTab;
-  });
-
-  // ★ カレンダー表示用の予約投稿ツイート
+  const filteredTweetsForList = tweets.filter(tweet => tweet.status === activeTab);
   const scheduledTweetsForCalendar = tweets.filter(tweet => tweet.status === 'scheduled');
 
   const tabs: { key: ActiveTab; label: string }[] = [
@@ -334,11 +381,10 @@ export default function TweetsPage() {
     { key: 'error', label: 'エラー' },
   ];
 
-  // ★ カレンダー上のイベントがクリックされたときの処理 (新規追加)
   const handleCalendarEventClick = (tweetId: string) => {
     const tweetToEdit = tweets.find(tweet => tweet.id === tweetId);
     if (tweetToEdit) {
-      handleEditTweet(tweetToEdit); // 既存の編集モーダルを開く関数を呼び出す
+      openTweetModal(tweetToEdit);
     } else {
       toast.error('編集対象のツイートが見つかりませんでした。');
     }
@@ -367,8 +413,7 @@ export default function TweetsPage() {
         <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 tracking-tight">
           ツイート管理
         </h1>
-        <div className="flex items-center space-x-4"> {/* ボタンを横並びにするためのコンテナ */}
-          {/* ★ 表示モード切り替えボタン (新規追加) */}
+        <div className="flex items-center space-x-4">
           <div className="flex rounded-md shadow-sm">
             <button
               onClick={() => setViewMode('list')}
@@ -389,8 +434,16 @@ export default function TweetsPage() {
               カレンダー
             </button>
           </div>
+          {/* ▼▼▼ 新規ツイート作成ボタン ▼▼▼ */}
+          <button
+            onClick={() => openTweetModal(null)}
+            className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 transition duration-300 whitespace-nowrap"
+          >
+            新規ツイート作成
+          </button>
+          {/* ▲▲▲ */}
           <Link href="/educational-tweets" className="px-6 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition duration-300">
-            新規教育ツイート作成
+            AIで教育ツイート作成
           </Link>
         </div>
       </div>
@@ -402,7 +455,6 @@ export default function TweetsPage() {
         </div>
       )}
 
-      {/* ★ リスト表示の場合のUI */}
       {viewMode === 'list' && (
         <>
           <div className="mb-6 border-b border-gray-200">
@@ -477,6 +529,16 @@ export default function TweetsPage() {
                         <div className="text-sm text-gray-900 whitespace-pre-wrap break-words" title={tweet.content}>
                             {tweet.content.length > 80 ? tweet.content.substring(0, 80) + "..." : tweet.content}
                         </div>
+                        {/* 画像のミニプレビューを追加 */}
+                        {tweet.image_urls && tweet.image_urls.length > 0 && (
+                          <div className="mt-2 flex space-x-2">
+                            {tweet.image_urls.map((url, idx) => (
+                              <a key={idx} href={url} target="_blank" rel="noopener noreferrer">
+                                <img src={url} alt={`attachment ${idx+1}`} className="h-10 w-10 object-cover rounded-md" />
+                              </a>
+                            ))}
+                          </div>
+                        )}
                         {tweet.education_element_key && (<div className="text-xs text-gray-400 mt-1">教育要素: {tweet.education_element_key}</div>)}
                         {tweet.launch_id && (<div className="text-xs text-gray-400 mt-1">ローンチID: <Link href={`/launches/${tweet.launch_id}/strategy`} className="hover:underline">{tweet.launch_id.substring(0,8)}...</Link></div>)}
                       </td>
@@ -497,7 +559,7 @@ export default function TweetsPage() {
                         {tweet.x_tweet_id ? (<a href={`https://x.com/anyuser/status/${tweet.x_tweet_id}`} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-900 hover:underline" title="Xでツイートを見る">{tweet.x_tweet_id.substring(0,10)}...</a>) : 'N/A'}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-y-1 sm:space-y-0 sm:space-x-2 flex flex-col sm:flex-row items-end sm:items-center">
-                        <button onClick={() => handleEditTweet(tweet)} className="text-indigo-600 hover:text-indigo-900 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 rounded-md hover:bg-gray-100 text-xs sm:text-sm" title={tweet.status === 'posted' ? "投稿済みツイートは編集できません" : "編集"} disabled={tweet.status === 'posted'}>編集</button>
+                        <button onClick={() => openTweetModal(tweet)} className="text-indigo-600 hover:text-indigo-900 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 rounded-md hover:bg-gray-100 text-xs sm:text-sm" title={tweet.status === 'posted' ? "投稿済みツイートは編集できません" : "編集"} disabled={tweet.status === 'posted'}>編集</button>
                         <button onClick={() => handlePostTweetNow(tweet.id)} className="text-green-600 hover:text-green-900 disabled:opacity-50 px-2 py-1 rounded-md hover:bg-gray-100 text-xs sm:text-sm" disabled={tweet.status === 'posted' || tweet.status === 'error'} title={tweet.status === 'posted' ? "投稿済み" : (tweet.status === 'error' ? "エラーのため投稿不可" : "今すぐ投稿")}>今すぐ投稿</button>
                         {tweet.status === 'scheduled' && (<button onClick={() => handleCancelSchedule(tweet.id)} className="text-yellow-600 hover:text-yellow-900 disabled:opacity-50 px-2 py-1 rounded-md hover:bg-gray-100 text-xs sm:text-sm" title="予約を解除" disabled={isCancellingSchedule === tweet.id}>{isCancellingSchedule === tweet.id ? '解除中...' : '予約解除'}</button>)}
                         <button onClick={() => handleDeleteTweet(tweet.id)} className="text-red-600 hover:text-red-900 px-2 py-1 rounded-md hover:bg-gray-100 text-xs sm:text-sm" title="削除">削除</button>
@@ -511,7 +573,6 @@ export default function TweetsPage() {
         </>
       )}
 
-      {/* ★ カレンダー表示の場合のUI */}
       {viewMode === 'calendar' && (
         <div>
           {isLoading && <p className="text-center py-10 text-gray-500">カレンダーデータを読み込み中...</p>}
@@ -532,7 +593,7 @@ export default function TweetsPage() {
                 onEventClick={handleCalendarEventClick}
              />
           )}
-           {error && viewMode === 'calendar' && ( // カレンダー表示時にエラーがあれば表示
+           {error && viewMode === 'calendar' && (
             <div className="mt-4 text-center text-red-500">
                 カレンダーデータの取得中にエラーが発生しました。
             </div>
@@ -540,52 +601,100 @@ export default function TweetsPage() {
         </div>
       )}
 
-      {/* ツイート編集モーダル */}
-      {isEditModalOpen && editingTweet && (
+      {/* ツイート作成・編集モーダル */}
+      {isEditModalOpen && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-75 overflow-y-auto h-full w-full flex items-center justify-center z-50 p-4">
           <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-            <h2 className="text-2xl font-bold mb-6 text-gray-800">ツイートを編集</h2>
-            <form onSubmit={handleUpdateTweet} className="space-y-6">
+            <h2 className="text-2xl font-bold mb-6 text-gray-800">
+              {editingTweet ? 'ツイートを編集' : '新規ツイートを作成'}
+            </h2>
+            <form onSubmit={handleSaveTweet} className="space-y-6">
               <div>
-                <label htmlFor="edit-content" className="block text-sm font-medium text-gray-700 mb-1">内容 *</label>
+                <label htmlFor="content" className="block text-sm font-medium text-gray-700 mb-1">内容 *</label>
                 <textarea
-                  id="edit-content"
+                  id="content"
                   name="content"
                   rows={7}
-                  value={editFormData.content}
-                  onChange={handleEditFormChange}
+                  value={formData.content}
+                  onChange={handleFormChange}
                   required
                   className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                 />
               </div>
+
+              {/* ▼▼▼ 画像アップロードUI ▼▼▼ */}
               <div>
-                <label htmlFor="edit-scheduled_at" className="block text-sm font-medium text-gray-700 mb-1">予約日時 (任意)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">画像 (4枚まで)</label>
+                <div className="mt-2">
+                  <input
+                    id="image-upload-input"
+                    type="file"
+                    multiple
+                    accept="image/jpeg,image/png,image/gif,image/webp"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                    disabled={isUploading || formData.image_urls.length >= 4}
+                  />
+                  <label
+                    htmlFor="image-upload-input"
+                    className={`px-4 py-2 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 cursor-pointer ${
+                      isUploading || formData.image_urls.length >= 4
+                        ? 'bg-gray-400 cursor-not-allowed'
+                        : 'bg-indigo-600 hover:bg-indigo-700'
+                    }`}
+                  >
+                    {isUploading ? 'アップロード中...' : '画像を選択'}
+                  </label>
+                </div>
+                {formData.image_urls.length > 0 && (
+                  <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    {formData.image_urls.map((url, index) => (
+                      <div key={index} className="relative group">
+                        <img src={url} alt={`Preview ${index + 1}`} className="w-full h-24 object-cover rounded-md shadow-md" />
+                        <button
+                          type="button"
+                          onClick={() => removeImage(index)}
+                          className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full p-1 leading-none w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                          aria-label={`画像を削除 ${index + 1}`}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* ▲▲▲ */}
+
+              <div>
+                <label htmlFor="scheduled_at" className="block text-sm font-medium text-gray-700 mb-1">予約日時 (任意)</label>
                 <input
                   type="datetime-local"
-                  id="edit-scheduled_at"
+                  id="scheduled_at"
                   name="scheduled_at"
-                  value={editFormData.scheduled_at}
-                  onChange={handleEditFormChange}
+                  value={formData.scheduled_at}
+                  onChange={handleFormChange}
                   className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
                 />
                 <p className="mt-1 text-xs text-gray-500">
-                  この日時を設定すると、ツイートのステータスが自動的に「予約」に変更されることがあります。
+                  日時を設定すると、ツイートのステータスが自動的に「予約」に変更されることがあります。
                 </p>
               </div>
+
               <div className="flex justify-end space-x-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => { setIsEditModalOpen(false); setEditingTweet(null); }}
+                  onClick={() => setIsEditModalOpen(false)}
                   className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500"
                 >
                   キャンセル
                 </button>
                 <button
                   type="submit"
-                  disabled={isSubmittingEdit}
+                  disabled={isSubmitting || isUploading}
                   className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
                 >
-                  {isSubmittingEdit ? '更新中...' : '更新する'}
+                  {isSubmitting ? '保存中...' : (editingTweet ? '更新する' : '作成する')}
                 </button>
               </div>
             </form>
