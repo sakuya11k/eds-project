@@ -9,7 +9,6 @@ import { supabase } from '@/lib/supabaseClient'
 import { toast } from 'react-hot-toast'
 import { PostCalendar } from '@/components/PostCalendar'
 
-// Tweetの型定義に image_urls を追加
 export type Tweet = {
   id: string;
   user_id: string;
@@ -24,10 +23,9 @@ export type Tweet = {
   error_message?: string | null;
   created_at: string;
   updated_at: string;
-  image_urls?: string[] | null; // ★★★ 画像URLの配列。nullも許容
+  image_urls?: string[] | null;
 }
 
-// フォームデータの型定義を更新
 type TweetFormData = {
   content: string;
   scheduled_at: string;
@@ -48,14 +46,12 @@ export default function TweetsPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [editingTweet, setEditingTweet] = useState<Tweet | null>(null)
   
-  // フォームデータ用のStateを更新
   const [formData, setFormData] = useState<TweetFormData>({
     content: '',
     scheduled_at: '',
     image_urls: [],
   })
 
-  // 画像アップロード処理用のState
   const [isUploading, setIsUploading] = useState(false);
   
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -109,7 +105,7 @@ export default function TweetsPage() {
   }, [user, authLoading])
 
   const openTweetModal = (tweet: Tweet | null) => {
-    if (tweet) { // 編集の場合
+    if (tweet) {
       setEditingTweet(tweet);
       let scheduledDateString = '';
       if (tweet.scheduled_at) {
@@ -130,7 +126,7 @@ export default function TweetsPage() {
         scheduled_at: scheduledDateString,
         image_urls: tweet.image_urls || [],
       });
-    } else { // 新規作成の場合
+    } else {
       setEditingTweet(null);
       setFormData({
         content: '',
@@ -159,7 +155,16 @@ export default function TweetsPage() {
 
     const uploadedUrls: string[] = [];
     for (const file of files) {
-      const filePath = `${user!.id}/${Date.now()}-${file.name}`;
+    // 1. ファイル名から拡張子を分離
+    const fileExtension = file.name.split('.').pop() || 'png';
+    const fileNameWithoutExtension = file.name.replace(/\.[^/.]+$/, "");
+
+    // 2. ファイル名本体から、英数字と一部の記号以外の全ての文字をアンダースコアに置換
+    const sanitizedFileName = fileNameWithoutExtension.replace(/[^a-zA-Z0-9_.-]/g, '_');
+
+    // 3. タイムスタンプと安全なファイル名、拡張子を結合して最終的なファイルパスを生成
+    const finalFileName = `${Date.now()}-${sanitizedFileName}.${fileExtension}`;
+    const filePath = `${user!.id}/${finalFileName}`;
       try {
         const { data, error } = await supabase.storage
           .from('tweet-images')
@@ -173,8 +178,18 @@ export default function TweetsPage() {
         
         uploadedUrls.push(publicUrlData.publicUrl);
       } catch (error: any) {
-        console.error('画像アップロードエラー:', error);
-        toast.error(`画像「${file.name}」のアップロードに失敗しました: ${error.message}`);
+        // ▼▼▼ ここからが今回修正したエラー表示強化部分 ▼▼▼
+        console.error('画像アップロードでエラーが発生しました。エラーオブジェクト全体:', error);
+        
+        // エラーオブジェクトを強制的に文字列化して、全ての内容を確認
+        const errorMessage = error.message || JSON.stringify(error, null, 2);
+        console.error('詳細なエラーメッセージ:', errorMessage);
+        
+        toast.error(`画像「${file.name}」のアップロードに失敗しました。`);
+        // エラーメッセージを直接トーストでも表示
+        toast.error(`エラー: ${errorMessage}`, { duration: 6000 });
+        // ▲▲▲ ここまでが今回修正したエラー表示強化部分 ▲▲▲
+        
         setIsUploading(false);
         return;
       }
@@ -434,14 +449,12 @@ export default function TweetsPage() {
               カレンダー
             </button>
           </div>
-          {/* ▼▼▼ 新規ツイート作成ボタン ▼▼▼ */}
           <button
             onClick={() => openTweetModal(null)}
             className="px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg shadow-md hover:bg-blue-700 transition duration-300 whitespace-nowrap"
           >
             新規ツイート作成
           </button>
-          {/* ▲▲▲ */}
           <Link href="/educational-tweets" className="px-6 py-2 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition duration-300">
             AIで教育ツイート作成
           </Link>
@@ -529,7 +542,6 @@ export default function TweetsPage() {
                         <div className="text-sm text-gray-900 whitespace-pre-wrap break-words" title={tweet.content}>
                             {tweet.content.length > 80 ? tweet.content.substring(0, 80) + "..." : tweet.content}
                         </div>
-                        {/* 画像のミニプレビューを追加 */}
                         {tweet.image_urls && tweet.image_urls.length > 0 && (
                           <div className="mt-2 flex space-x-2">
                             {tweet.image_urls.map((url, idx) => (
@@ -601,7 +613,6 @@ export default function TweetsPage() {
         </div>
       )}
 
-      {/* ツイート作成・編集モーダル */}
       {isEditModalOpen && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-75 overflow-y-auto h-full w-full flex items-center justify-center z-50 p-4">
           <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
@@ -622,7 +633,6 @@ export default function TweetsPage() {
                 />
               </div>
 
-              {/* ▼▼▼ 画像アップロードUI ▼▼▼ */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">画像 (4枚まで)</label>
                 <div className="mt-2">
@@ -664,8 +674,7 @@ export default function TweetsPage() {
                   </div>
                 )}
               </div>
-              {/* ▲▲▲ */}
-
+              
               <div>
                 <label htmlFor="scheduled_at" className="block text-sm font-medium text-gray-700 mb-1">予約日時 (任意)</label>
                 <input
