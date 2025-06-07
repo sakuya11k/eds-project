@@ -1632,7 +1632,7 @@ def save_tweet_draft():
 # --- ★ ここから予約投稿実行APIを追加 ★ ---
 # sakuya11k/eds-project/eds-project-feature-account-strategy-page/backend/app.py
 
-@app.route('/api/v1/tweets/execute-scheduled', methods=['POST'])
+@app.route('/api/v1/tweets/execute-scheduled/', methods=['POST'])
 def execute_scheduled_tweets():
     # (推奨) Cronジョブからのリクエストを認証
     if CRON_JOB_SECRET: # 環境変数にシークレットが設定されていれば検証する
