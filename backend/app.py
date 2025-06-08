@@ -1,4 +1,3 @@
-
 import os
 from flask import Flask, jsonify, request, g
 from flask_cors import CORS
@@ -8,9 +7,9 @@ from functools import wraps
 import datetime
 import traceback
 import google.generativeai as genai
-# GoogleSearchRetrieval を削除し、Tool と GenerationConfig のみインポート
 from google.generativeai.types import Tool, GenerationConfig
 import tweepy
+from cryptography.fernet import Fernet
 
 # .envファイルを読み込む
 load_dotenv()
@@ -19,322 +18,187 @@ app = Flask(__name__)
 # CORS設定
 CORS(
     app,
-    origins=["http://localhost:3000"],
+    origins=["http://localhost:3000", "https://eds-saku-front.vercel.app"],
     allow_headers=["Content-Type", "Authorization"],
     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    supports_credentials=True,
-    expose_headers=["Content-Length"]
+    supports_credentials=True
 )
 print(">>> CORS configured.")
 
-# ↓↓↓ここから追記・変更↓↓↓
+# 定数定義 (profilesテーブルから古いAPIキー関連を削除)
 PROFILE_COLUMNS_TO_SELECT = [
     "id", "username", "website", "avatar_url",
-    "brand_voice", "target_persona", # 既存の簡易版カラム。新しい詳細カラムへの移行を検討。
-    "preferred_ai_model",
-    "x_api_key", "x_api_secret_key", "x_access_token", "x_access_token_secret",
-    "updated_at",
-    # 新しく追加したアカウント戦略関連カラム
-    "account_purpose",
-    "main_target_audience",
-    "core_value_proposition",
-    "brand_voice_detail",
-    "main_product_summary",
-    "edu_s1_purpose_base",
-    "edu_s2_trust_base",
-    "edu_s3_problem_base",
-    "edu_s4_solution_base",
-    "edu_s5_investment_base",
-    "edu_s6_action_base",
-    "edu_r1_engagement_hook_base",
-    "edu_r2_repetition_base",
-    "edu_r3_change_mindset_base",
-    "edu_r4_receptiveness_base",
-    "edu_r5_output_encouragement_base",
-    "edu_r6_baseline_shift_base"
+    "brand_voice", "target_persona", "preferred_ai_model", "updated_at",
+    "account_purpose", "main_target_audience", "core_value_proposition",
+    "brand_voice_detail", "main_product_summary", "edu_s1_purpose_base",
+    "edu_s2_trust_base", "edu_s3_problem_base", "edu_s4_solution_base",
+    "edu_s5_investment_base", "edu_s6_action_base", "edu_r1_engagement_hook_base",
+    "edu_r2_repetition_base", "edu_r3_change_mindset_base", "edu_r4_receptiveness_base",
+    "edu_r5_output_encouragement_base", "edu_r6_baseline_shift_base"
 ]
-
-# g.profile に格納する主要な情報 (AIプロンプト生成などで頻繁に使うもの)
-G_PROFILE_KEYS = [
-    "id", "username", "preferred_ai_model",
-    "brand_voice", "target_persona", # 既存の簡易版。詳細版への移行を検討。
-    "x_api_key", "x_api_secret_key", "x_access_token", "x_access_token_secret",
-    # 新しいアカウント戦略関連カラム
-    "account_purpose",
-    "main_target_audience", # JSONB
-    "core_value_proposition",
-    "brand_voice_detail",   # JSONB
-    "main_product_summary",
-    # 教育基本方針 (代表的なものやAIで特に重要なものを選定。全て含めるとg.profileが大きくなりすぎる可能性も)
-    "edu_s1_purpose_base",
-    "edu_s3_problem_base",
-    "edu_s4_solution_base",
-    "edu_s6_action_base",
-    "edu_r1_engagement_hook_base",
-    "edu_r3_change_mindset_base"
-]
-# ↑↑↑ここまで追記・変更↑↑↑
 
 # Supabase クライアント初期化
 url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_KEY")
-print(f">>> SUPABASE_URL: {url}")
-print(f">>> SUPABASE_KEY: {'Set (Hidden)' if key else '!!! Not Set !!!'}")
-supabase: Client = None
-if not url or not key: print("!!! FATAL ERROR: SUPABASE_URL or SUPABASE_KEY is not set.")
-else:
-    try: supabase = create_client(url, key); print(">>> Supabase client initialized.")
-    except Exception as e: print(f"!!! FATAL ERROR: Failed to initialize Supabase client: {e}")
+supabase: Client = create_client(url, key)
+print(">>> Supabase client initialized.")
 
 # Gemini API キー設定
 gemini_api_key = os.environ.get("GEMINI_API_KEY")
-if not gemini_api_key: print("!!! WARNING: GEMINI_API_KEY is not set. AI features will be disabled.")
-else:
-    try: genai.configure(api_key=gemini_api_key); print(">>> Gemini API key configured.")
-    except Exception as e: print(f"!!! WARNING: Failed to configure Gemini API key: {e}. AI features might fail.")
+if gemini_api_key:
+    genai.configure(api_key=gemini_api_key)
+    print(">>> Gemini API key configured.")
 
-# Cronジョブからのリクエストを認証するためのシークレットキーを環境変数から読み込む (推奨)
-CRON_JOB_SECRET = os.environ.get("CRON_JOB_SECRET")
-if not CRON_JOB_SECRET:
-    print("!!! WARNING: CRON_JOB_SECRET is not set. Scheduled tweet endpoint will be insecure if not protected otherwise.")
+# 暗号化キーを環境変数から取得
+ENCRYPTION_KEY = os.environ.get('ENCRYPTION_KEY')
+if not ENCRYPTION_KEY:
+    raise ValueError("No ENCRYPTION_KEY set for Flask application")
+cipher_suite = Fernet(ENCRYPTION_KEY.encode())
 
-# JWT 検証デコレーター
+class EncryptionManager:
+    @staticmethod
+    def encrypt(data: str) -> str:
+        if not data: return ""
+        return cipher_suite.encrypt(data.encode()).decode()
+
+    @staticmethod
+    def decrypt(encrypted_data: str) -> str:
+        if not encrypted_data: return ""
+        return cipher_suite.decrypt(encrypted_data.encode()).decode()
+
+# --- 認証デコレーター (最終修正版) ---
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         if request.method == 'OPTIONS':
-            return f(*args, **kwargs)
+            return app.make_default_options_response()
         
-        print(">>> Entering token_required decorator (actual request)...")
         token = None
-        if 'Authorization' in request.headers:
-            auth_header = request.headers['Authorization']
-            parts = auth_header.split()
-            if len(parts) == 2 and parts[0].lower() == 'bearer':
-                token = parts[1]
+        auth_header = request.headers.get('Authorization')
+        if auth_header and auth_header.startswith('Bearer '):
+            token = auth_header.split(" ")[1]
         
         if not token:
-            print("!!! Token is missing!")
             return jsonify({"message": "Token is missing!"}), 401
         
-        try: 
-            if not supabase:
-                print("!!! Supabase client not initialized in token_required!")
-                return jsonify({"message": "Supabase client not initialized!"}), 500
-            
+        try:
             user_response = supabase.auth.get_user(token)
-            g.user = user_response.user 
+            g.user = user_response.user
+            if not g.user:
+                return jsonify({"message": "User not found for token"}), 401
             
-            if g.user: 
-                profile_res = supabase.table('profiles').select(
-                    ",".join(G_PROFILE_KEYS) 
-                ).eq('id', g.user.id).maybe_single().execute() 
-                g.profile = profile_res.data if profile_res.data else {} 
-                
-                log_g_profile_summary = {
-                    k: (str(v)[:30] + '...' if isinstance(v, (str, dict, list)) and len(str(v)) > 35 else v)
-                    for k, v in g.profile.items()
-                } 
-                
-                print(f">>> Token validated for user: {g.user.id}. g.profile keys loaded: {list(g.profile.keys())}") 
-                
-                if 'main_target_audience' in g.profile: 
-                    print(f"    g.profile sample (main_target_audience): {log_g_profile_summary.get('main_target_audience')}") 
-                
-                if 'brand_voice_detail' in g.profile: 
-                     print(f"    g.profile sample (brand_voice_detail): {log_g_profile_summary.get('brand_voice_detail')}") 
-            
-            else: 
-                g.profile = {} 
-                print(f">>> Token validated but no user object returned by supabase.auth.get_user().") 
+            print(f">>> Token OK for user: {g.user.id}")
 
-        except Exception as e: 
-            print(f"!!! Token validation error: {e}") 
-            traceback.print_exc() 
-            return jsonify({"message": "Token invalid or expired!", "error": str(e)}), 401 
+        except Exception as e:
+            print(f"!!! Token validation error: {e}")
+            traceback.print_exc()
+            return jsonify({"message": "Token invalid or expired!", "error": str(e)}), 401
         
-        return f(*args, **kwargs) 
-
+        return f(*args, **kwargs)
     return decorated
 
-# [get_current_ai_model 関数を修正]
-def get_current_ai_model(user_profile, default_model_name='gemini-2.5-flash-preview-05-20', system_instruction_text=None, use_Google_Search=False):
-    if not gemini_api_key:
-        print("!!! AI features disabled: GEMINI_API_KEY is not set.")
-        return None
-    
-    preferred_model_name = user_profile.get('preferred_ai_model', default_model_name)
-    print(f">>> AI: Attempting to use model: {preferred_model_name}")
-
-    model_kwargs = {}
-    if system_instruction_text:
-        model_kwargs['system_instruction'] = system_instruction_text
-        print(f">>> AI: Using System instruction for {preferred_model_name}: {system_instruction_text[:150]}...")
-
-    tools_to_use = []
-    if use_Google_Search:
-        try:
-            # Google検索ツールを設定 (Python SDKの正式な方法)
-            # from google.genai.types import GoogleSearchRetrieval # Block 1でインポート済み想定
-            Google_Search_tool = Tool(Google_Search_retrieval=GoogleSearchRetrieval()) # disable_attribution はデフォルトFalse
-            tools_to_use.append(Google_Search_tool)
-            print(f">>> AI: Google Search tool configured for model {preferred_model_name}.")
-        except NameError: # GoogleSearchRetrieval がインポートできていない場合など
-            print(f"!!! AI Warning: GoogleSearchRetrieval not defined or imported. Google Search tool will not be available.")
-        except Exception as e_tool:
-            print(f"!!! AI: Failed to configure Google Search tool: {e_tool}. Proceeding without it.")
-            # tools_to_use は空のまま
-
-    if tools_to_use: # tools_to_use リストが空でなければ tools 引数を渡す
-        model_kwargs['tools'] = tools_to_use
-        print(f">>> AI: Model will be initialized with tools: {model_kwargs['tools']}")
-
-    try:
-        generation_config_params = {
-            "temperature": 0.7,
-        }
-        generation_config_obj = GenerationConfig(**generation_config_params) # GenerationConfigクラスを使用
-        
-        model = genai.GenerativeModel(
-            model_name=preferred_model_name, # model_nameキーワード引数を明示
-            generation_config=generation_config_obj,
-            **model_kwargs
-        )
-        print(f">>> AI: Successfully initialized model: {preferred_model_name}")
-        return model
-    except Exception as e_pref:
-        print(f"!!! AI: Failed to initialize preferred model '{preferred_model_name}': {e_pref}. Trying default '{default_model_name}'.")
-        try:
-            generation_config_obj = GenerationConfig(temperature=0.7) # デフォルトも同様の設定
-            model = genai.GenerativeModel(
-                model_name=default_model_name, # model_nameキーワード引数を明示
-                generation_config=generation_config_obj,
-                **model_kwargs # tools_to_use が含まれていればここで渡される
-            )
-            print(f">>> AI: Successfully initialized default model: {default_model_name} {'with tools' if model_kwargs.get('tools') else ''}")
-            return model
-        except Exception as e_default:
-            print(f"!!! AI: Failed to initialize default model '{default_model_name}': {e_default}.")
-            traceback.print_exc()
-            return None
-
+# --- ルート ---
 @app.route('/')
 def index():
-    print(">>> GET / called")
     return jsonify({"message": "Welcome to the EDS Backend API!"})
 
-
-
+# --- Profile API ---
 @app.route('/api/v1/profile', methods=['GET', 'PUT'])
 @token_required
 def handle_profile():
-    user = getattr(g, 'user', None)
-    if not user: 
-        print("!!! Auth error in handle_profile: No user object in g after token_required.")
-        return jsonify({"message": "Authentication error: User context not found."}), 401
-    user_id = user.id
-    
-    if not supabase: 
-        print("!!! Supabase client not initialized in handle_profile")
-        return jsonify({"message": "Supabase client not initialized!"}), 500
-
+    user_id = g.user.id
     if request.method == 'GET':
         try:
-            print(f">>> GET /api/v1/profile for user_id: {user_id}. Selecting columns: {PROFILE_COLUMNS_TO_SELECT}")
-            res = supabase.table('profiles').select(
-                ",".join(PROFILE_COLUMNS_TO_SELECT) # 更新されたカラムリストを使用
-            ).eq('id',user_id).maybe_single().execute()
-            
-            if res.data: 
-                return jsonify(res.data)
-            print(f"--- Profile not found for user_id: {user_id} during GET")
-            return jsonify({"message":"Profile not found."}), 404
-        except Exception as e: 
-            print(f"!!! Error fetching profile for user_id {user_id}: {e}")
-            traceback.print_exc()
-            return jsonify({"message":"Error fetching profile","error":str(e)}),500
-            
-    elif request.method == 'PUT':
-        data=request.json
-        if not data:
-            print("!!! Bad request in handle_profile PUT: No JSON data received")
-            return jsonify({"message": "Invalid request: No JSON data provided."}), 400
+            profile_data = supabase.table('profiles').select(",".join(PROFILE_COLUMNS_TO_SELECT)).eq('id', user_id).single().execute()
+            if not profile_data.data:
+                return jsonify({"error": "Profile not found"}), 404
+            return jsonify(profile_data.data), 200
+        except Exception as e:
+            print(f"Error fetching profile: {e}"); traceback.print_exc()
+            return jsonify({"error": "Failed to fetch profile", "details": str(e)}), 500
 
-        # 更新を許可するフィールドリスト (PROFILE_COLUMNS_TO_SELECTからid, updated_at等を除いたものに相当)
-        allowed_fields_for_update = [
-            'username', 'website', 'avatar_url', 'brand_voice', 'target_persona',
-            'preferred_ai_model', 'x_api_key', 'x_api_secret_key',
-            'x_access_token', 'x_access_token_secret',
-            "account_purpose", "main_target_audience", "core_value_proposition",
-            "brand_voice_detail", "main_product_summary",
-            "edu_s1_purpose_base", "edu_s2_trust_base", "edu_s3_problem_base",
-            "edu_s4_solution_base", "edu_s5_investment_base", "edu_s6_action_base",
-            "edu_r1_engagement_hook_base", "edu_r2_repetition_base",
-            "edu_r3_change_mindset_base", "edu_r4_receptiveness_base",
-            "edu_r5_output_encouragement_base", "edu_r6_baseline_shift_base"
-        ]
-        payload={k:v for k,v in data.items() if k in allowed_fields_for_update}
-
-        if not payload: 
-            print("!!! No valid fields for profile update.")
-            return jsonify({"message":"No valid fields for update."}),400
-            
-        payload['updated_at']=datetime.datetime.now(datetime.timezone.utc).isoformat()
-        
-        log_payload = {
-            k: (str(v)[:20] + '...' if isinstance(v, (str, dict, list)) and len(str(v)) > 25 else v) 
-            for k,v in payload.items()
-        }
-        print(f">>> Attempting to update profile for user_id: {user_id} with payload: {log_payload}")
-
+    if request.method == 'PUT':
         try:
-            res=supabase.table('profiles').update(payload).eq('id',user_id).execute()
+            data = request.get_json()
+            if not data: return jsonify({"error": "Invalid JSON"}), 400
             
-            if res.data and isinstance(res.data, list) and len(res.data) > 0:
-                print(f">>> Profile updated successfully for user_id: {user_id}.")
-                # g.profile の更新ロジックも新しいキーを考慮
-                updated_profile_data_for_g = {
-                    key: res.data[0].get(key) for key in G_PROFILE_KEYS if res.data[0].get(key) is not None
-                }
-                g.profile = updated_profile_data_for_g # g.profileを更新
-                log_g_profile_summary_put = {
-                    k: (str(v)[:30] + '...' if isinstance(v, (str, dict, list)) and len(str(v)) > 35 else v)
-                    for k, v in g.profile.items()
-                }
-                print(f"    g.profile updated with keys: {list(g.profile.keys())}")
-                print(f"    Sample g.profile content after PUT: {log_g_profile_summary_put}")
-                return jsonify(res.data[0])
-            elif hasattr(res,'error') and res.error:
-                print(f"!!! Supabase error updating profile for user_id {user_id}: {res.error}")
-                return jsonify({"message":"Error updating profile","error":str(res.error)}),500
-            else:
-                # 更新成功したが res.data が空の場合の再フェッチ処理
-                print(f"--- Profile update for user_id {user_id} returned no data in res.data (or not a list), attempting re-fetch.")
-                updated_res = supabase.table('profiles').select(
-                     ",".join(PROFILE_COLUMNS_TO_SELECT)
-                ).eq('id',user_id).maybe_single().execute()
-                if updated_res.data:
-                    print(f">>> Profile re-fetched successfully for user_id: {user_id}")
-                    updated_profile_for_g_refetch = {
-                        key: updated_res.data.get(key) for key in G_PROFILE_KEYS if updated_res.data.get(key) is not None
-                    }
-                    g.profile = updated_profile_for_g_refetch # g.profileを更新
-                    log_g_profile_summary_refetch = {
-                        k: (str(v)[:30] + '...' if isinstance(v, (str, dict, list)) and len(str(v)) > 35 else v)
-                        for k, v in g.profile.items()
-                    }
-                    print(f"    g.profile updated (after re-fetch) with keys: {list(g.profile.keys())}")
-                    print(f"    Sample g.profile content after re-fetch: {log_g_profile_summary_refetch}")
-                    return jsonify(updated_res.data), 200
-                else:
-                    print(f"!!! Failed to re-fetch profile for user_id {user_id} after update. Error: {updated_res.error if hasattr(updated_res, 'error') else 'Unknown'}")
-                    return jsonify({"message":"Profile updated, but failed to retrieve updated data."}), 200 # 成功したがデータは返せない場合
-        except Exception as e: 
-            print(f"!!! Exception updating profile for user_id {user_id}: {e}")
-            traceback.print_exc()
-            return jsonify({"message":"Error updating profile","error":str(e)}),500
+            update_data = {key: value for key, value in data.items() if key in PROFILE_COLUMNS_TO_SELECT}
+            update_data['updated_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             
-    return jsonify({"message": "Method Not Allowed"}), 405
+            if not update_data: return jsonify({"error": "No valid fields to update"}), 400
+            
+            response = supabase.table('profiles').update(update_data).eq('id', user_id).returning('representation').execute()
+            
+            if not response.data: raise Exception("Failed to update profile or no data returned.")
+            return jsonify(response.data[0]), 200
+        except Exception as e:
+            print(f"Error updating profile: {e}"); traceback.print_exc()
+            return jsonify({"error": "Failed to update profile", "details": str(e)}), 500
+
+# --- Xアカウント管理API ---
+@app.route('/api/v1/x-accounts', methods=['POST', 'GET'])
+@token_required
+def handle_x_accounts():
+    user_id = g.user.id
+    if request.method == 'POST':
+        try:
+            data = request.json
+            if not data: return jsonify({"error": "Request body is missing"}), 400
+            
+            required_fields = ['x_username', 'api_key', 'api_key_secret', 'access_token', 'access_token_secret']
+            if not all(field in data and data[field] for field in required_fields):
+                return jsonify({"error": "All fields are required"}), 400
+            
+            encrypted_api_key = EncryptionManager.encrypt(data['api_key'])
+            encrypted_api_key_secret = EncryptionManager.encrypt(data['api_key_secret'])
+            encrypted_access_token = EncryptionManager.encrypt(data['access_token'])
+            encrypted_access_token_secret = EncryptionManager.encrypt(data['access_token_secret'])
+
+            response = supabase.table('x_accounts').insert({
+                'user_id': user_id, 'x_username': data['x_username'],
+                'api_key_encrypted': encrypted_api_key, 'api_key_secret_encrypted': encrypted_api_key_secret,
+                'access_token_encrypted': encrypted_access_token, 'access_token_secret_encrypted': encrypted_access_token_secret,
+            }, returning='representation').execute()
+
+            if not response.data: raise Exception("Failed to insert or return data.")
+            return jsonify(response.data[0]), 201
+        except Exception as e:
+            print(f"Error adding X account: {e}"); traceback.print_exc()
+            return jsonify({"error": "Failed to add X account", "details": str(e)}), 500
+            
+    if request.method == 'GET':
+        try:
+            response = supabase.table('x_accounts').select('id, x_username, is_active, created_at').eq('user_id', user_id).order('created_at').execute()
+            return jsonify(response.data), 200
+        except Exception as e:
+            print(f"Error getting X accounts: {e}")
+            return jsonify({"error": "Failed to retrieve X accounts", "details": str(e)}), 500
+
+@app.route('/api/v1/x-accounts/<uuid:x_account_id>/activate', methods=['PUT'])
+@token_required
+def set_active_x_account(x_account_id):
+    try:
+        user_id = g.user.id
+        supabase.table('x_accounts').update({'is_active': False}).eq('user_id', user_id).execute()
+        update_response = supabase.table('x_accounts').update({'is_active': True}).eq('id', str(x_account_id)).eq('user_id', user_id).returning('representation').execute()
+        if not update_response.data: return jsonify({"error": "Account not found or permission denied"}), 404
+        return jsonify(update_response.data[0]), 200
+    except Exception as e:
+        print(f"Error activating X account: {e}")
+        return jsonify({"error": "Failed to activate X account", "details": str(e)}), 500
+
+@app.route('/api/v1/x-accounts/<uuid:x_account_id>', methods=['DELETE'])
+@token_required
+def delete_x_account(x_account_id):
+    try:
+        user_id = g.user.id
+        response = supabase.table('x_accounts').delete().eq('id', str(x_account_id)).eq('user_id', user_id).returning('representation').execute()
+        if not response.data: return jsonify({"error": "Account not found or permission denied"}), 404
+        return jsonify({"message": "Account deleted successfully"}), 200
+    except Exception as e:
+        print(f"Error deleting X account: {e}")
+        return jsonify({"error": "Failed to delete X account", "details": str(e)}), 500
+
 
 # --- 商品管理 API ---
 @app.route('/api/v1/products', methods=['POST'])
@@ -2572,5 +2436,5 @@ def generate_initial_tweet():
 
 # Flaskサーバーの起動
 if __name__ == '__main__':
-    print("--- Starting Flask server on http://127.0.0.1:5001 ---")
-    app.run(debug=True, host='127.0.0.1', port=5001)
+    port = int(os.environ.get('PORT', 5001))
+    app.run(host='0.0.0.0', port=port, debug=True)

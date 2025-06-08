@@ -1,106 +1,62 @@
-// src/components/header.tsx
-'use client'
+'use client';
 
-import { useAuth } from '@/context/AuthContext' 
-import Link from 'next/link'
-import { useRouter } from 'next/navigation' 
+import { useAuth } from '@/context/AuthContext';
+import { useXAccount } from '@/context/XAccountContext';
+import Link from 'next/link';
 
-export default function Header() {
-  const { user, signOut, loading } = useAuth() 
-  const router = useRouter()
-
-  const handleSignOut = async () => {
-    await signOut()
-    router.push('/login') 
-  }
+const Header = () => {
+  const { user, signOut } = useAuth();
+  const { activeXAccount, isLoading } = useXAccount();
 
   return (
-    <header className="bg-white shadow-sm sticky top-0 z-50"> {/* ヘッダーを上部固定 */}
-      <nav className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center h-16">
-          <div className="flex-shrink-0">
-            <Link href="/" className="text-2xl font-bold text-indigo-600 hover:text-indigo-700 transition-colors">
-              EDS
-            </Link>
-          </div>
-          <div className="ml-4 flex items-center space-x-1 sm:space-x-2 md:space-x-4"> {/* スペース調整 */}
-            {loading ? (
-              // 認証情報読み込み中のプレースホルダー
-              <div className="animate-pulse flex items-center space-x-2 md:space-x-4">
-                <div className="h-5 w-16 sm:w-20 bg-gray-200 rounded"></div>
-                <div className="h-8 w-20 sm:w-24 bg-gray-200 rounded-md"></div>
+    <header className="bg-gray-800 text-white p-4 sticky top-0 z-50 shadow-md">
+      <nav className="container mx-auto flex justify-between items-center">
+        <Link href="/" className="text-xl font-bold hover:text-blue-400 transition-colors">
+          EDS
+        </Link>
+        <div className="flex items-center space-x-4">
+          {user ? (
+            <>
+              {/* アカウント選択状態の表示（クラッシュしない安全な表示） */}
+              <div className="text-sm">
+                {isLoading ? (
+                  <span className="text-gray-400">...</span>
+                ) : activeXAccount ? (
+                  <Link href="/dashboard" className="bg-blue-600 px-3 py-1 rounded-md text-white font-semibold hover:bg-blue-500 transition-colors">
+                    <span>@{activeXAccount.x_username}</span>
+                  </Link>
+                ) : (
+                  <Link href="/dashboard" className="bg-yellow-500 text-black px-3 py-1 rounded-md font-semibold hover:bg-yellow-400 transition-colors">
+                    <span>アカウント設定</span>
+                  </Link>
+                )}
               </div>
-            ) : user ? (
-              // ログイン時の表示
-              <>
-                <span className="text-xs sm:text-sm text-gray-600 hidden md:block mr-2"> {/* メールアドレス、小さい画面では非表示 */}
-                  {user.email}
-                </span>
-                <Link
-                  href="/dashboard"
-                  className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
-                >
-                  ダッシュボード
-                </Link>
-                <Link
-                  href="/mypage/products"
-                  className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
-                >
-                  商品管理
-                </Link>
-                <Link
-                  href="/launches"
-                  className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
-                >
-                  ローンチ計画
-                </Link>
-                <Link
-                  href="/educational-tweets" 
-                  className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
-                >
-                  教育ツイート作成
-                </Link>
-                {/* ===== ここから追加 ===== */}
-                <Link
-                  href="/initial-post-generator" // 新しい「初期投稿生成ページ」へのパス
-                  className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
-                >
-                  初期投稿生成
-                </Link>
-                {/* ===== ここまで追加 ===== */}
-                <Link
-                  href="/tweets" 
-                  className="px-2 sm:px-3 py-2 rounded-md text-xs sm:text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
-                >
-                  ツイート管理
-                </Link>
-                <button
-                  onClick={handleSignOut}
-                  className="px-3 sm:px-4 py-2 border border-transparent text-xs sm:text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
-                >
-                  ログアウト
-                </button>
-              </>
-            ) : (
-              // 未ログイン時の表示
-              <>
-                <Link
-                  href="/login"
-                  className="px-3 py-2 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
-                >
-                  ログイン
-                </Link>
-                <Link
-                  href="/signup"
-                  className="ml-2 inline-flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors"
-                >
-                  新規登録
-                </Link>
-              </>
-            )}
-          </div>
+
+              {/* ===== ご指摘のあった、元のメニュー構成を復元します ===== */}
+              <Link href="/dashboard" className="hover:text-gray-300">アカウント管理</Link>
+              <Link href="/tweets" className="hover:text-gray-300">ツイート管理</Link>
+              <Link href="/initial-post-generator" className="hover:text-gray-300">初期投稿生成</Link>
+              <Link href="/educational-tweets" className="hover:text-gray-300">教育ツイート</Link>
+              <Link href="/launches" className="hover:text-gray-300">ローンチ管理</Link>
+              <Link href="/mypage" className="hover:text-gray-300">マイページ</Link>
+              
+              <button
+                onClick={signOut}
+                className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded"
+              >
+                Sign Out
+              </button>
+            </>
+          ) : (
+            <>
+              <Link href="/login" className="hover:text-gray-300">Login</Link>
+              <Link href="/signup" className="hover:text-gray-300">Sign Up</Link>
+            </>
+          )}
         </div>
       </nav>
     </header>
-  )
-}
+  );
+};
+
+export default Header;

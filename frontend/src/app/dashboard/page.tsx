@@ -1,146 +1,143 @@
-'use client'
+// frontend/src/app/dashboard/page.tsx
 
-import { useEffect, useState } from 'react'
-import { useAuth } from '@/context/AuthContext' // AuthContext のパスを確認してください
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
-import axios from 'axios'
-import { supabase } from '@/lib/supabaseClient' // Supabaseクライアントのパスを確認してください
-import { toast } from 'react-hot-toast'     // toast をインポート
+'use client';
 
-// バックエンドのダミーレスポンスに合わせた型定義
-type ProfileData = {
-  id: string;
-  username: string | null;
-  message: string;
-}
+import { useXAccount, XAccount } from '@/context/XAccountContext'; // XAccount型をインポート
+import { FormEvent, useState } from 'react';
 
-export default function Dashboard() {
-  const { user, loading: authLoading, signOut } = useAuth() // loading を authLoading に変更
-  const router = useRouter()
-  const [profile, setProfile] = useState<ProfileData | null>(null)
-  const [apiLoading, setApiLoading] = useState(true) // 初期値をtrueにして最初から読み込む
-  const [apiError, setApiError] = useState<string | null>(null)
+// ルール#1準拠: クライアントコンポーネントなのでmetadataはエクスポートしない
 
-  // 認証状態を監視し、未ログインならリダイレクト
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.push('/login')
-    }
-  }, [user, authLoading, router])
+export default function DashboardPage() {
+  const { 
+    xAccounts, 
+    activeXAccount, 
+    isLoading, 
+    addXAccount, 
+    deleteXAccount, 
+    setActiveXAccount 
+  } = useXAccount();
 
-  // プロファイル情報を取得する API 呼び出し
-  useEffect(() => {
-    const fetchProfile = async () => {
-      // ユーザーが確定していて、まだAPIをロード中でない場合のみ実行
-      if (user && !authLoading) {
-        setApiLoading(true) // API呼び出し開始
-        setApiError(null)
-        try {
-          const { data: { session } } = await supabase.auth.getSession()
+  const [newAccount, setNewAccount] = useState({
+    x_username: '',
+    api_key: '',
+    api_key_secret: '',
+    access_token: '',
+    access_token_secret: '',
+  });
 
-          if (!session) {
-            // toast.error("セッションが見つかりません。再度ログインしてください。");
-            // await signOut(); // signOut を呼び出すと無限ループの可能性があるので注意
-            // router.push('/login');
-            throw new Error("セッションが見つかりません。再度ログインしてください。")
-          }
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-          const response = await axios.get(
-            'http://localhost:5001/api/v1/profile', // ポート番号 5001 を確認
-            {
-              headers: {
-                Authorization: `Bearer ${session.access_token}`,
-              },
-            }
-          )
-          setProfile(response.data)
-        } catch (error: any) {
-          console.error('プロファイル取得エラー:', error)
-          let errorMessage = 'プロファイルの取得に失敗しました。'
-          if (axios.isAxiosError(error)) {
-            if (error.response) {
-              // サーバーがエラーレスポンスを返した場合
-              errorMessage = error.response.data?.message || error.message
-            } else if (error.request) {
-              // リクエストは送られたが、応答がなかった場合 (Network Errorなど)
-              errorMessage = 'サーバーからの応答がありません。バックエンドが起動しているか確認してください。'
-            } else {
-              // リクエスト設定時のエラー
-              errorMessage = error.message
-            }
-          } else {
-            errorMessage = error.message || '不明なエラーが発生しました。';
-          }
-          setApiError(errorMessage)
-          toast.error(errorMessage) // エラーを通知
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setNewAccount(prev => ({ ...prev, [name]: value }));
+  };
 
-          // 401エラー（認証エラー）の場合はログインページに強制送還も検討
-          if (axios.isAxiosError(error) && error.response?.status === 401) {
-             toast.error("認証の有効期限が切れたか、無効です。再度ログインしてください。");
-             // await signOut(); // 無限ループを避けるため、ここでは signOut しない方が良いかも
-             router.push('/login');
-          }
-
-        } finally {
-          setApiLoading(false) // API呼び出し完了
-        }
-      } else if (!authLoading && !user) {
-        // ユーザーがいない場合はAPIローディングも終了
-        setApiLoading(false);
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setIsSubmitting(true);
+    try {
+      if (Object.values(newAccount).some(field => field === '')) {
+        throw new Error('すべてのフィールドを入力してください。');
       }
+      await addXAccount(newAccount);
+      setIsModalOpen(false);
+      setNewAccount({ x_username: '', api_key: '', api_key_secret: '', access_token: '', access_token_secret: '' });
+    } catch (err: unknown) {
+      console.error(err);
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError('アカウントの追加中に不明なエラーが発生しました。');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
-
-    fetchProfile()
-  }, [user, authLoading, router, signOut]) // signOut を依存配列に追加 (使う場合)
-
-  // 認証情報のローディング中
-  if (authLoading) {
-    return (
-      <div className="flex justify-center items-center min-h-[calc(100vh-200px)]">
-        <p>認証情報を確認中...</p>
-      </div>
-    )
+  };
+  
+  if (isLoading) {
+    return <div className="p-8 text-center">読み込み中...</div>;
   }
 
-  // 未ログイン（useEffect でリダイレクトされるはずだが、念のため）
-  if (!user) {
-    return (
-      <div className="flex justify-center items-center min-h-[calc(100vh-200px)]">
-        <p>ログインページへリダイレクトします...</p>
-      </div>
-    )
-  }
-
-  // ログイン済みユーザー向けの表示
   return (
-    <div>
-      <h1 className="text-2xl font-bold mb-6">ようこそ、ダッシュボードへ！</h1>
-      <div className="bg-white p-6 shadow rounded-lg">
-        <p className="text-lg mb-4">
-          こんにちは、<span className="font-semibold">{user.email}</span> さん！
-        </p>
+    <div className="p-8">
+      <h1 className="text-3xl font-bold mb-6">アカウント管理</h1>
 
-        <div className="mt-6 p-4 border rounded-md bg-gray-50">
-          <h2 className="text-xl font-semibold mb-3">APIからの情報 (テスト)</h2>
-          {apiLoading && <p>読み込み中...</p>}
-          {apiError && <p className="text-red-500">エラー: {apiError}</p>}
-          {profile && !apiLoading && !apiError && (
-            <div>
-              <p><strong>メッセージ:</strong> {profile.message}</p>
-              <p><strong>ID:</strong> {profile.id}</p>
-              <p><strong>ユーザー名:</strong> {profile.username}</p>
-            </div>
-          )}
-        </div>
-
-        <Link
-          href="/mypage" // 例: マイページへのリンク
-          className="mt-6 inline-block text-indigo-600 hover:text-indigo-800 font-medium"
-        >
-          マイページで編集する (未作成)
-        </Link>
+      <div className="mb-8 p-4 border rounded-lg bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
+        <h2 className="text-xl font-semibold mb-2">現在のアクティブアカウント</h2>
+        {activeXAccount ? (
+          <p className="text-lg font-mono bg-blue-100 text-blue-800 px-3 py-1 rounded-md inline-block">
+            @{activeXAccount.x_username}
+          </p>
+        ) : (
+          <p className="text-gray-500">Xアカウントを登録または選択してください。</p>
+        )}
       </div>
+
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-2xl font-semibold">登録済みアカウント</h2>
+        <button onClick={() => setIsModalOpen(true)} className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-300" disabled={isSubmitting}>
+          ＋ 新しいアカウントを追加
+        </button>
+      </div>
+
+      <div className="space-y-4">
+        {xAccounts.length > 0 ? (
+          // ルール#3準拠: accountに型を明示的に指定
+          xAccounts.map((account: XAccount) => (
+            <div key={account.id} className="flex items-center justify-between p-4 border rounded-lg shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700">
+              <div>
+                <p className="font-bold text-lg">@{account.x_username}</p>
+                <p className="text-sm text-gray-500">ID: {account.id}</p>
+              </div>
+              <div className="flex items-center space-x-4">
+                {account.is_active ? (
+                  <span className="px-3 py-1 text-sm font-semibold text-green-800 bg-green-100 rounded-full">
+                    アクティブ
+                  </span>
+                ) : (
+                  <button onClick={() => setActiveXAccount(account.id)} className="px-3 py-1 text-sm text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 dark:hover:bg-gray-500">
+                    アクティブにする
+                  </button>
+                )}
+                <button onClick={() => deleteXAccount(account.id)} className="px-3 py-1 text-sm text-red-600 hover:text-red-800">
+                  削除
+                </button>
+              </div>
+            </div>
+          ))
+        ) : (
+          <p className="text-center text-gray-500 py-8">登録されているアカウントはありません。</p>
+        )}
+      </div>
+
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
+          <div className="bg-white dark:bg-gray-900 p-8 rounded-lg shadow-2xl w-full max-w-lg">
+            <h2 className="text-2xl font-bold mb-4">新しいXアカウントを追加</h2>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <input type="text" name="x_username" value={newAccount.x_username} onChange={handleInputChange} placeholder="Xのユーザー名 (@なし)" className="w-full p-2 border rounded dark:bg-gray-800 dark:border-gray-700" required />
+              <input type="password" name="api_key" value={newAccount.api_key} onChange={handleInputChange} placeholder="API Key" className="w-full p-2 border rounded dark:bg-gray-800 dark:border-gray-700" required />
+              <input type="password" name="api_key_secret" value={newAccount.api_key_secret} onChange={handleInputChange} placeholder="API Key Secret" className="w-full p-2 border rounded dark:bg-gray-800 dark:border-gray-700" required />
+              <input type="password" name="access_token" value={newAccount.access_token} onChange={handleInputChange} placeholder="Access Token" className="w-full p-2 border rounded dark:bg-gray-800 dark:border-gray-700" required />
+              <input type="password" name="access_token_secret" value={newAccount.access_token_secret} onChange={handleInputChange} placeholder="Access Token Secret" className="w-full p-2 border rounded dark:bg-gray-800 dark:border-gray-700" required />
+              
+              {error && <p className="text-red-500 text-sm">{error}</p>}
+
+              <div className="flex justify-end space-x-4 mt-6">
+                <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-200 dark:hover:bg-gray-600" disabled={isSubmitting}>
+                  キャンセル
+                </button>
+                <button type="submit" className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400" disabled={isSubmitting}>
+                  {isSubmitting ? '追加中...' : '追加する'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
-  )
+  );
 }
