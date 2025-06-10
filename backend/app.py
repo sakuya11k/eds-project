@@ -1506,6 +1506,7 @@ def save_tweet_draft():
 # app.py 内の execute_scheduled_tweets 関数を、以下のコードで完全に置き換えてください
 
 @app.route('/api/v1/tweets/execute-scheduled', methods=['POST'])
+@app.route('/api/v1/tweets/execute-scheduled/', methods=['POST'])
 def execute_scheduled_tweets():
     if CRON_JOB_SECRET and request.headers.get('Authorization') != f"Bearer {CRON_JOB_SECRET}":
         print("!!! Unauthorized attempt to execute scheduled tweets.")
