@@ -16,6 +16,8 @@ load_dotenv()
 app = Flask(__name__)
 
 # CORS設定
+CRON_JOB_SECRET = os.environ.get('CRON_JOB_SECRET')
+
 CORS(
     app,
     origins=["http://localhost:3000", "https://eds-saku-front.vercel.app"],
