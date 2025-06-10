@@ -1526,9 +1526,11 @@ def execute_scheduled_tweets():
         now_utc_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
         
         # image_urls カラムと、profiles テーブルの関連情報も取得
+        
         scheduled_tweets_res = supabase.table('tweets').select(
-            "*, profiles(x_api_key, x_api_secret_key, x_access_token, x_access_token_secret), image_urls"
-        ).eq('status', 'scheduled').lte('scheduled_at', now_utc_str).execute()
+    '*, x_account:x_account_id(*)'
+).eq('status', 'scheduled').lte('scheduled_at', now_utc_str).execute()
+       
 
         if hasattr(scheduled_tweets_res, 'error') and scheduled_tweets_res.error:
             print(f"!!! Error fetching scheduled tweets: {scheduled_tweets_res.error}")
