@@ -1503,14 +1503,13 @@ def save_tweet_draft():
 # --- ★ ここから予約投稿実行APIを追加 ★ ---
 # sakuya11k/eds-project/eds-project-feature-account-strategy-page/backend/app.py
 
-@app.route('/api/v1/tweets/execute-scheduled/', methods=['POST'])
+# app.py 内の execute_scheduled_tweets 関数を、以下のコードで完全に置き換えてください
+
+@app.route('/api/v1/tweets/execute-scheduled', methods=['POST'])
 def execute_scheduled_tweets():
-    # (推奨) Cronジョブからのリクエストを認証
-    if CRON_JOB_SECRET: # 環境変数にシークレットが設定されていれば検証する
-        auth_header = request.headers.get('Authorization')
-        if not auth_header or auth_header != f"Bearer {CRON_JOB_SECRET}":
-            print("!!! Unauthorized attempt to execute scheduled tweets.")
-            return jsonify({"message": "Unauthorized"}), 401
+    if CRON_JOB_SECRET and request.headers.get('Authorization') != f"Bearer {CRON_JOB_SECRET}":
+        print("!!! Unauthorized attempt to execute scheduled tweets.")
+        return jsonify({"message": "Unauthorized"}), 401
     
     print(">>> POST /api/v1/tweets/execute-scheduled called")
     if not supabase:
@@ -1522,19 +1521,15 @@ def execute_scheduled_tweets():
     processed_tweets = []
 
     try:
-        # 現在時刻より前の、ステータスが 'scheduled' のツイートを取得
         now_utc_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
         
-        # image_urls カラムと、profiles テーブルの関連情報も取得
-        
+        # x_accountsテーブルをJOINして認証情報を取得
         scheduled_tweets_res = supabase.table('tweets').select(
-    '*, x_account:x_account_id(*)'
-).eq('status', 'scheduled').lte('scheduled_at', now_utc_str).execute()
-       
+            '*, x_account:x_account_id(*)'
+        ).eq('status', 'scheduled').lte('scheduled_at', now_utc_str).execute()
 
         if hasattr(scheduled_tweets_res, 'error') and scheduled_tweets_res.error:
-            print(f"!!! Error fetching scheduled tweets: {scheduled_tweets_res.error}")
-            return jsonify({"message": "Error fetching scheduled tweets", "error": str(scheduled_tweets_res.error)}), 500
+            raise Exception(f"Error fetching scheduled tweets: {scheduled_tweets_res.error}")
 
         if not scheduled_tweets_res.data:
             print("--- No scheduled tweets to post at this time.")
@@ -1545,160 +1540,83 @@ def execute_scheduled_tweets():
 
         for tweet_data in tweets_to_process:
             tweet_id = tweet_data.get('id')
-            user_id = tweet_data.get('user_id')
             content = tweet_data.get('content')
-            profile_data = tweet_data.get('profiles')
-            image_urls = tweet_data.get('image_urls', [])
+            image_urls = tweet_data.get('image_urls', []) # 画像URLリストを取得
+            x_account_data = tweet_data.get('x_account')
 
-            if not content:
-                print(f"--- Tweet ID {tweet_id} for user {user_id} has no content. Skipping and marking as error.")
-                supabase.table('tweets').update({
-                    "status": "error", 
-                    "error_message": "Content was empty at scheduled time.",
-                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                }).eq('id', tweet_id).execute()
+            if not x_account_data:
+                error_msg = f"X Account data not found for tweet ID {tweet_id}."
+                print(f"--- {error_msg}")
+                supabase.table('tweets').update({"status": "error", "error_message": error_msg}).eq('id', tweet_id).execute()
                 failed_posts += 1
-                processed_tweets.append({"id": tweet_id, "status": "error", "reason": "Empty content"})
                 continue
 
-            if not profile_data:
-                print(f"--- User profile with X API keys not found for tweet ID {tweet_id} (user_id: {user_id}). Skipping and marking as error.")
-                supabase.table('tweets').update({
-                    "status": "error", 
-                    "error_message": "User profile or X API credentials not found.",
-                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                }).eq('id', tweet_id).execute()
-                failed_posts += 1
-                processed_tweets.append({"id": tweet_id, "status": "error", "reason": "Profile/API keys not found"})
-                continue
-            
-            media_ids = []
-            if image_urls and isinstance(image_urls, list):
-                try:
-                    consumer_key = profile_data.get('x_api_key')
-                    consumer_secret = profile_data.get('x_api_secret_key')
-                    access_token = profile_data.get('x_access_token')
-                    access_token_secret = profile_data.get('x_access_token_secret')
+            try:
+                # 認証情報を復号
+                api_key = EncryptionManager.decrypt(x_account_data.get('api_key_encrypted'))
+                api_key_secret = EncryptionManager.decrypt(x_account_data.get('api_key_secret_encrypted'))
+                access_token = EncryptionManager.decrypt(x_account_data.get('access_token_encrypted'))
+                access_token_secret = EncryptionManager.decrypt(x_account_data.get('access_token_secret_encrypted'))
 
-                    if not all([consumer_key, consumer_secret, access_token, access_token_secret]):
-                        raise Exception("X API v1.1 credentials for media upload are missing.")
+                if not all([api_key, api_key_secret, access_token, access_token_secret]):
+                    raise ValueError("X API credentials incomplete in the x_accounts table.")
 
-                    auth_v1 = tweepy.OAuth1UserHandler(consumer_key, consumer_secret, access_token, access_token_secret)
+                # ▼▼▼【メディアアップロード処理】▼▼▼
+                media_ids = []
+                if image_urls and isinstance(image_urls, list):
+                    # メディアアップロードにはv1.1のAPIクライアントが必要
+                    auth_v1 = tweepy.OAuth1UserHandler(api_key, api_key_secret, access_token, access_token_secret)
                     api_v1 = tweepy.API(auth_v1)
                     
-                    import requests
-                    import tempfile
-                    import os
-
-                    for url in image_urls:
+                    for url in image_urls[:4]: # Twitter APIは最大4枚まで
+                        tmp_filename = None
                         try:
+                            # URLから画像をダウンロードして一時ファイルに保存
                             response = requests.get(url, stream=True)
                             response.raise_for_status()
                             with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
-                                for chunk in response.iter_content(chunk_size=8192):
-                                    tmp.write(chunk)
+                                tmp.write(response.content)
                                 tmp_filename = tmp.name
-                            print(f"--- Uploading media from {url} for tweet {tweet_id}...")
+                            
+                            # 一時ファイルをアップロード
+                            print(f"--- Uploading media for tweet {tweet_id} from {url}...")
                             media = api_v1.media_upload(filename=tmp_filename)
                             media_ids.append(media.media_id_string)
-                            print(f"--- Media uploaded for tweet {tweet_id}, media_id: {media.media_id_string}")
-                        finally:
-                            if 'tmp_filename' in locals() and os.path.exists(tmp_filename):
-                                os.remove(tmp_filename)
-                except Exception as e_media:
-                    print(f"!!! Media upload failed for tweet {tweet_id}: {e_media}")
-                    supabase.table('tweets').update({
-                        "status": "error", 
-                        "error_message": f"Media upload failed: {str(e_media)}",
-                        "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    }).eq('id', tweet_id).execute()
-                    failed_posts += 1
-                    processed_tweets.append({"id": tweet_id, "status": "error", "reason": "Media upload failed"})
-                    continue
+                            print(f"--- Media uploaded, media_id: {media.media_id_string}")
 
-            api_client_v2 = get_x_api_client(profile_data)
-            if not api_client_v2:
-                print(f"--- Failed to initialize X API client for tweet ID {tweet_id} (user_id: {user_id}). Skipping and marking as error.")
-                supabase.table('tweets').update({
-                    "status": "error", 
-                    "error_message": "Failed to initialize X API client (check credentials).",
-                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                }).eq('id', tweet_id).execute()
-                failed_posts += 1
-                processed_tweets.append({"id": tweet_id, "status": "error", "reason": "X API client init failed"})
-                continue
-            
-            try:
-                print(f">>> Attempting to post tweet ID {tweet_id} to X for user {user_id} with media_ids: {media_ids}...")
-                created_x_tweet_response = api_client_v2.create_tweet(
+                        finally:
+                            # 一時ファイルを削除
+                            if tmp_filename and os.path.exists(tmp_filename):
+                                os.remove(tmp_filename)
+                # ▲▲▲【メディアアップロード処理ここまで】▲▲▲
+
+                # ツイート投稿にはv2のAPIクライアントを使用
+                client_v2 = tweepy.Client(
+                    consumer_key=api_key, consumer_secret=api_key_secret,
+                    access_token=access_token, access_token_secret=access_token_secret
+                )
+                
+                # メディアIDを付けてツイート
+                created_x_tweet_response = client_v2.create_tweet(
                     text=content,
                     media_ids=media_ids if media_ids else None
                 )
+                x_tweet_id_str = created_x_tweet_response.data.get('id')
                 
-                x_tweet_id_str = None
-                if created_x_tweet_response.data and created_x_tweet_response.data.get('id'):
-                    x_tweet_id_str = created_x_tweet_response.data.get('id')
-                    print(f">>> Tweet ID {tweet_id} posted successfully to X! X Tweet ID: {x_tweet_id_str}")
-                    
-                    supabase.table('tweets').update({
-                        "status": "posted",
-                        "posted_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                        "x_tweet_id": x_tweet_id_str,
-                        "error_message": None,
-                        "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    }).eq('id', tweet_id).execute()
-                    successful_posts += 1
-                    processed_tweets.append({"id": tweet_id, "status": "posted", "x_tweet_id": x_tweet_id_str})
-                else:
-                    error_detail_x = "Unknown error or unexpected response structure from X API v2 while posting."
-                    if hasattr(created_x_tweet_response, 'errors') and created_x_tweet_response.errors:
-                        error_detail_x = str(created_x_tweet_response.errors)
-                    elif hasattr(created_x_tweet_response, 'reason'): 
-                        error_detail_x = created_x_tweet_response.reason
-                    print(f"!!! Error in X API v2 tweet creation response for tweet ID {tweet_id}: {error_detail_x}")
-                    
-                    supabase.table('tweets').update({
-                        "status": "error",
-                        "error_message": f"X API Error: {error_detail_x}",
-                        "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                    }).eq('id', tweet_id).execute()
-                    failed_posts += 1
-                    processed_tweets.append({"id": tweet_id, "status": "error", "reason": f"X API Error: {error_detail_x}"})
+                # 成功時のDB更新
+                update_payload = {"status": "posted", "posted_at": now_utc_str, "x_tweet_id": x_tweet_id_str, "error_message": None}
+                supabase.table('tweets').update(update_payload).eq('id', tweet_id).execute()
+                successful_posts += 1
+                processed_tweets.append({"id": tweet_id, "status": "posted", "x_tweet_id": x_tweet_id_str})
 
-            except tweepy.TweepyException as e_tweepy:
-                error_message = str(e_tweepy)
-                if hasattr(e_tweepy, 'response') and e_tweepy.response is not None:
-                    try:
-                        error_json = e_tweepy.response.json()
-                        if 'errors' in error_json and error_json['errors']:
-                             error_message = f"X API Error: {error_json['errors'][0].get('message', str(e_tweepy))}"
-                        elif 'title' in error_json: 
-                             error_message = f"X API Error: {error_json['title']}: {error_json.get('detail', '')}"
-                        elif hasattr(e_tweepy.response, 'data') and e_tweepy.response.data:
-                            error_message = f"X API Error (e.g., 403 Forbidden): {e_tweepy.response.data}"
-                    except ValueError: pass
-                elif hasattr(e_tweepy, 'api_codes') and hasattr(e_tweepy, 'api_messages'):
-                     error_message = f"X API Error {e_tweepy.api_codes}: {e_tweepy.api_messages}"
-
-                print(f"!!! TweepyException posting tweet ID {tweet_id}: {error_message}")
+            except Exception as e_post:
+                # 投稿失敗時のDB更新
+                error_message = f"Post Error: {str(e_post)}"
+                print(f"!!! Error posting tweet ID {tweet_id}: {error_message}")
                 traceback.print_exc()
-                supabase.table('tweets').update({
-                    "status": "error", 
-                    "error_message": f"TweepyException: {error_message}",
-                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                }).eq('id', tweet_id).execute()
+                supabase.table('tweets').update({"status": "error", "error_message": error_message}).eq('id', tweet_id).execute()
                 failed_posts += 1
-                processed_tweets.append({"id": tweet_id, "status": "error", "reason": f"TweepyException: {error_message}"})
-            except Exception as e_general:
-                print(f"!!! General exception posting tweet ID {tweet_id}: {e_general}")
-                traceback.print_exc()
-                supabase.table('tweets').update({
-                    "status": "error", 
-                    "error_message": f"General Exception: {str(e_general)}",
-                    "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                }).eq('id', tweet_id).execute()
-                failed_posts += 1
-                processed_tweets.append({"id": tweet_id, "status": "error", "reason": f"General Exception: {str(e_general)}"})
+                processed_tweets.append({"id": tweet_id, "status": "error", "reason": error_message})
         
         print(f">>> Scheduled tweets processing finished. Success: {successful_posts}, Failed: {failed_posts}")
         return jsonify({
@@ -1713,8 +1631,7 @@ def execute_scheduled_tweets():
         traceback.print_exc()
         return jsonify({"message": "An unexpected error occurred during scheduled tweet processing.", "error": str(e)}), 500
 
-# --- Tweets API (Complete & Unabridged) ---
-# --- Tweets API (Final Version - Unabridged) ---
+
 
 # [GET] ツイート一覧を取得するAPI
 @app.route('/api/v1/tweets', methods=['GET'])
