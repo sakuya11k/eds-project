@@ -78,7 +78,7 @@ def get_current_ai_model(user_profile, use_Google_Search=False, system_instructi
     try:
         # ユーザーが選択したモデル名を取得。未設定ならデフォルト値を使用。
         # ここでは g.profile ではなく、引数で渡された user_profile を使用する
-        model_name = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest') # デフォルトモデルを最新版に
+        model_name = user_profile.get('preferred_ai_model', 'gemini-2.5-flash-preview-05-20') # デフォルトモデルを最新版に
         
         # Google検索ツールを使うかどうかの設定
         tools = [Tool.from_google_search_retrieval(google_search_retrieval={})] if use_Google_Search else None
@@ -1043,7 +1043,7 @@ def handle_launch_strategy(launch_id):
             
             # 3. Xアカウント全体の普遍的な戦略を取得
             account_strategy_res = supabase.table('account_strategies').select('*').eq('x_account_id', x_account_id).maybe_single().execute()
-
+            
             # 4. 必要な情報をまとめてフロントエンドに返す
             return jsonify({
                 "launch_info": {
@@ -1852,7 +1852,7 @@ def generate_educational_tweet():
 
         # 1. Xアカウントに紐づく戦略情報を取得
         account_strategy_res = supabase.table('account_strategies').select('*').eq('x_account_id', x_account_id).eq('user_id', user_id).maybe_single().execute()
-        account_strategy = account_strategy_res.data or {}
+        account_strategy = account_strategy_res.data if account_strategy_res else {}
 
         # 2. ユーザー全体のAIモデル設定を取得 (g.profileから)
         user_profile = getattr(g, 'profile', {})
@@ -2058,7 +2058,7 @@ def generate_initial_tweet():
 
         # 1. Xアカウントに紐づく戦略情報を取得
         account_strategy_res = supabase.table('account_strategies').select('*').eq('x_account_id', x_account_id).eq('user_id', user_id).maybe_single().execute()
-        account_strategy = account_strategy_res.data or {}
+        account_strategy = account_strategy_res.data if account_strategy_res else {}
 
         # 2. ユーザー全体の基本情報を取得 (g.profileから)
         user_profile = getattr(g, 'profile', {})

@@ -25,13 +25,13 @@ type ProfileApiResponse = ProfileFormData & {
 const initialFormData: ProfileFormData = {
   username: '',
   website: '', // 初期値は空文字でOK
-  preferred_ai_model: 'gemini-1.5-flash-latest', // 最新モデルをデフォルトに
+  preferred_ai_model: 'gemini-2.5-flash-preview-05-20', // 最新モデルをデフォルトに
 };
 
 // AIモデルの選択肢
 const aiModelOptions = [
-  { value: 'gemini-1.5-flash-latest', label: 'Gemini 1.5 Flash (高速・標準)' },
-  { value: 'gemini-1.5-pro-latest', label: 'Gemini 1.5 Pro (高性能・高品質)' },
+  { value: 'gemini-2.5-flash-preview-05-20', label: 'Gemini 2.5 Flash (高速・標準)' },
+  { value: 'gemini-2.5-pro-preview-06-05', label: 'Gemini 2.5 Pro (高性能・高品質)' },
 ];
 
 
