@@ -10,7 +10,8 @@ import google.generativeai as genai
 from google.generativeai.types import Tool, GenerationConfig
 import tweepy
 from cryptography.fernet import Fernet
-
+import json
+import re 
 # .envファイルを読み込む
 load_dotenv()
 app = Flask(__name__)
@@ -381,60 +382,69 @@ def create_product():
     
     
     # アカウント目的の提案
+# app.py 内の suggest_account_purpose 関数を以下で置き換える
 
-@app.route('/api/v1/profile/suggest-purpose', methods=['POST'])
+@app.route('/api/v1/profile/suggest-purpose', methods=['POST', 'OPTIONS'])
+@app.route('/api/v1/profile/suggest-purpose/', methods=['POST', 'OPTIONS'])
 @token_required
 def suggest_account_purpose():
-    user_profile = getattr(g, 'profile', {})
-    if not user_profile:
-        return jsonify({"message": "User profile not found."}), 403
-
+    user_id = g.user.id
     data = request.json
-    user_keywords = data.get('user_keywords', '') # 例: "自由な働き方, 初心者向け, 収益化支援"
-    existing_website_content = data.get('website_content', '') # 将来的にウェブサイトのURLから内容を取得する機能も考えられる
+    
+    # 1. フロントエンドから必須の x_account_id とキーワードを受け取る
+    x_account_id = data.get('x_account_id')
+    if not x_account_id:
+        return jsonify({"error": "x_account_id is required"}), 400
+    user_keywords = data.get('user_keywords', '')
 
-    # 現在のプロファイル情報も参考にする
+    # 2. x_account_id を使って、アカウントごとの「商品概要」を取得する
+    try:
+        acc_strategy_res = supabase.table('account_strategies').select('main_product_summary').eq('x_account_id', x_account_id).eq('user_id', user_id).maybe_single().execute()
+        account_strategy = acc_strategy_res.data if acc_strategy_res else {}
+        current_product_summary = account_strategy.get('main_product_summary', '（情報なし）')
+    except Exception as e_db:
+        return jsonify({"error": "Failed to fetch account strategy", "details": str(e_db)}), 500
+
+    # 3. ユーザー全体のプロフィール情報からアカウント名を取得
+    #    (将来的にはx_accountsテーブルから取得する方がより正確)
+    user_profile = getattr(g, 'profile', {})
     current_username = user_profile.get('username', '名無しの発信者')
-    current_product_summary = user_profile.get('main_product_summary', '提供商品・サービスについての詳細情報')
-
+    
+    # 4. AIモデルを初期化
     model = get_current_ai_model(user_profile)
     if not model:
         return jsonify({"message": "AI model could not be initialized."}), 500
 
+    # 5. AIに渡すプロンプトを組み立てる
     prompt_parts = [
-        f"あなたは経験豊富なブランドストラテジスト兼コピーライターです。",
-        f"以下の情報を元に、ユーザー「{current_username}」のXアカウントの魅力的で共感を呼ぶ「基本理念・パーパス」のドラフトを3案、それぞれ100～150字程度で提案してください。",
-        f"## 参考情報:",
-        f"  - ユーザーが入力したキーワード: {user_keywords if user_keywords else '特に指定なし'}",
-        f"  - ユーザーの主要商品/サービス概要: {current_product_summary if current_product_summary else '特に指定なし'}",
+        f"あなたは、個人の情報発信を支援する経験豊富なブランドストラテジスト兼コピーライターです。",
+        f"あなたの仕事は、クライアントが漠然と持っている想いやキーワードを、「基本理念・パーパス」として言語化することです。「基本理念・パーパス」とはこのアカウントを通じて何を達成したいか、どのような価値を提供したいのかということです。",
+        f"以下のクライアント情報を元に、「基本理念・パーパス」のドラフトを1つ、250～350字程度で作成してください。",
+        
+        f"\n## クライアント情報:",
+        f"  - アカウント名: {current_username}",
+        f"  - クライアントが表現したいこと（キーワード）: {user_keywords if user_keywords else '特に指定なし'}",
+        f"  - 提供予定の商品/サービス概要: {current_product_summary}", # 正しい情報を反映
+        
+        f"\n## 作成指示:",
+        f"1. **ターゲットの明確化**: 上記のキーワードから、この理念が「誰に」向けたメッセージなのかを具体的にしてください。（例：「PCが苦手な40代主婦」「キャリアに悩む20代女性」など）",
+        f"2. **提供価値の具体化**: このアカウントに触れることで、ターゲットが「どうなれるのか」という未来（ベネフィット）を、感情に訴えかける言葉で鮮やかに描写してください。（例：「自信を取り戻す」「新しい自分として輝く」など）",
+        f"3. **共感の創出**: ターゲットが抱えるであろう悩みやコンプレックスに寄り添い、「私にもできるかも」という希望と勇気を与えるような、温かく力強いメッセージを込めてください。",
+        
+        f"\n## 文体と出力形式:",
+        f"  - 全体として、誠実なトーンで記述してください。",
+        f"  - 最終的なアウトプットは、完成された『基本理念・パーパス』の文章本文のみとしてください。前置きや解説は一切不要です。"
     ]
-    if existing_website_content:
-        prompt_parts.append(f"  - ユーザーの既存ウェブサイトの内容（抜粋）: {existing_website_content[:500]}...") # 長文の場合は切り詰める
-    
-    prompt_parts.append(f"## 作成指示:")
-    prompt_parts.append(f"  - 各提案は、ターゲット顧客に響き、アカウントの方向性を示すような内容にしてください。")
-    prompt_parts.append(f"  - ポジティブで、インスピレーションを与えるようなトーンが望ましいです。")
-    prompt_parts.append(f"  - 提案は箇条書きで、各案の前に「提案1:」「提案2:」のように番号を振ってください。")
     
     prompt = "\n".join(prompt_parts)
     print(f">>> Suggest Account Purpose Prompt: \n{prompt[:500]}...")
 
     try:
+        # 6. AIにリクエストを送信し、結果を返す
         ai_response = model.generate_content(prompt)
-        suggestions_text = ai_response.text
-        
-        # AIの応答から各提案をパースする (単純な改行区切りなどを想定)
-        # より複雑な場合は正規表現や構造化された出力をAIに求める
-        suggestions_list = [s.strip().lstrip("提案1:").lstrip("提案2:").lstrip("提案3:").strip() for s in suggestions_text.splitlines() if s.strip()]
-        
-        # 最初の提案をメインのsuggestionとして返すか、リスト全体を返すか選択
-        # ここでは最初の提案を返す例
-        main_suggestion = suggestions_list[0] if suggestions_list else "AIからの提案生成に失敗しました。もう一度お試しください。"
-
-        print(f">>> AI Suggested Purpose: {main_suggestion}")
-        # フロントエンドが複数の提案を扱えるなら、リストで返す
-        # return jsonify({"suggestions": suggestions_list}), 200 
-        return jsonify({"suggestion": main_suggestion}), 200
+        suggestion = ai_response.text.strip() if ai_response.text else "AIからの提案生成に失敗しました。"
+        print(f">>> AI Suggested Purpose: {suggestion}")
+        return jsonify({"suggestion": suggestion}), 200
 
     except Exception as e:
         print(f"!!! Exception during AI purpose suggestion: {e}")
@@ -442,69 +452,89 @@ def suggest_account_purpose():
         return jsonify({"message": "AIによる目的提案中にエラーが発生しました。", "error": str(e)}), 500
     
     # ペルソナ案を複数提案
+# app.py 内の suggest_persona_draft 関数を、以下のコードで完全に置き換えてください。
+# app.py 内の suggest_persona_draft 関数を以下の最終版で置き換える
 
-@app.route('/api/v1/profile/suggest-persona-draft', methods=['POST'])
+@app.route('/api/v1/profile/suggest-persona-draft', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
 def suggest_persona_draft():
-    user_profile = getattr(g, 'profile', {})
-    if not user_profile:
-        return jsonify({"message": "User profile not found."}), 403
-
+    user_id = g.user.id
     data = request.json
-    user_keywords = data.get('user_keywords', '') # 例: "30代 主婦 副業"
-    num_personas_to_suggest = data.get('num_personas', 2) # フロントエンドから提案数を指定できるようにする
+    
+    # フロントエンドから必須の x_account_id を受け取る
+    x_account_id = data.get('x_account_id')
+    if not x_account_id:
+        return jsonify({"error": "x_account_id is required"}), 400
 
-    # アカウント戦略の他の情報も参考にする
-    current_product_summary = user_profile.get('main_product_summary', '未設定の商品・サービス概要')
-    current_account_purpose = user_profile.get('account_purpose', '未設定のアカウント目的')
+    # x_account_id を使って、アカウントごとの戦略情報を取得する
+    try:
+        acc_strategy_res = supabase.table('account_strategies').select('main_product_summary, account_purpose').eq('x_account_id', x_account_id).eq('user_id', user_id).maybe_single().execute()
+        account_strategy = acc_strategy_res.data if acc_strategy_res else {}
+    except Exception as e_db:
+        return jsonify({"error": "Failed to fetch account strategy", "details": str(e_db)}), 500
 
+    # AIプロンプトで使う情報を準備する
+    user_keywords = data.get('user_keywords', '')
+    # num_personas_to_suggest は1案に固定するため不要になるが、念のため残す
+    num_personas_to_suggest = 1
+    current_product_summary = account_strategy.get('main_product_summary', '（情報なし）')
+    current_account_purpose = account_strategy.get('account_purpose', '（情報なし）')
+
+    # AIモデルを初期化
+    user_profile = getattr(g, 'profile', {})
     model = get_current_ai_model(user_profile)
     if not model:
         return jsonify({"message": "AI model could not be initialized."}), 500
 
+    # AIに渡すプロンプトを組み立てる（1案生成バージョン）
     prompt_parts = [
-        f"あなたは経験豊富なマーケターであり、ペルソナ設定の専門家です。",
-        f"以下の情報を元に、ターゲット顧客となりうる具体的なペルソナのドラフトを{num_personas_to_suggest}案、提案してください。",
-        f"各ペルソナ案には、以下の項目を含めてください: 「名前（例：佐藤みき）」「年齢層/属性（例：30代後半、子育て中のパート主婦）」「主な悩み/欲求/課題（例：子供との時間を大切にしながら、家計のために月5万円の追加収入が欲しい。PCスキルにはあまり自信がない。）」。",
-        f"## 参考情報:",
+        f"あなたは、顧客の深層心理を読み解くプロのマーケティングリサーチャー兼コピーライターです。",
+        f"以下の情報を元に、この商品やサービスに強く惹きつけられるであろう、最も代表的でリアルなペルソナのドラフトを**1案だけ**、提案してください。",
+        
+        f"\n## このアカウントの戦略情報:",
+        f"  - アカウントの目的: {current_account_purpose}",
+        f"  - 主要商品/サービス概要: {current_product_summary}",
         f"  - ユーザーが入力したターゲットキーワード: {user_keywords if user_keywords else '特に指定なし'}",
-        f"  - ユーザーの主要商品/サービス概要: {current_product_summary}",
-        f"  - ユーザーのアカウントの目的: {current_account_purpose}",
-        f"## 作成指示:",
-        f"  - 各ペルソナは、提供される商品やサービスに興味を持ちそうな、現実的な人物像として描写してください。",
-        f"  - 悩みや欲求は、商品やサービスで解決できる可能性のあるものを含めてください。",
-        f"  - 出力は、各ペルソナを辞書のリスト（JSON形式）として返してください。各辞書のキーは 'name', 'age', '悩み' としてください。",
-        f"例: [{'name': '田中あい', 'age': '20代後半 OL', '悩み': 'キャリアアップしたいが、何を学ぶべきか分からない。'}, {{'name': '鈴木けんた', 'age': '40代 個人事業主', '悩み': '集客がうまくいかず、売上が不安定。'}}]"
+        
+        f"\n## ペルソナに含めるべき項目と作成指示:",
+        f"1. **`name` (名前)**: それらしいフルネームを付けてください。",
+        f"2. **`age` (年齢層/属性)**: 具体的な年齢と、社会的属性（例: 専業主婦、営業職、フリーランスなど）を記述してください。",
+        f"3. **`悩み` (悩み/欲求/課題)**: このペルソナが、夜中にふと目覚めてしまった時に頭をよぎるような、**リアルな不安や自己嫌悪、そして心の奥底にある切実な願い**を、まるで本人の独白のような形で、感情豊かに150字程度で描写してください。",
+        
+        f"\n## 最重要の出力形式:",
+        f"  - **必ず、前置きや解説、```json ... ```のようなマークダウンは一切含めず、要素が1つの純粋なJSON配列（[...]）そのものだけを出力してください。**",
+        f"  - 各ペルソナはJSONオブジェクトとし、キーは `name`, `age`, `悩み` の3つのみにしてください。",
+        f"  - 例: `[{{\"name\": \"田中 恵子\", \"age\": \"45歳 専業主婦\", \"悩み\": \"...\"}}]`"
     ]
     prompt = "\n".join(prompt_parts)
-    print(f">>> Suggest Persona Draft Prompt (first 500 chars): \n{prompt[:500]}...")
+    print(f">>> Suggest Persona Draft Prompt (1 persona version): \n{prompt[:500]}...")
 
     try:
         ai_response = model.generate_content(prompt)
-        # AIにJSON形式で出力するよう指示しているので、パースを試みる
+        
+        # 堅牢なJSON抽出ロジック
         try:
-            # AIの応答が ```json ... ``` のようなマークダウン形式で返ってくる場合を考慮
             import json
             response_text = ai_response.text
-            if response_text.strip().startswith("```json"):
-                response_text = response_text.strip()[7:-3].strip() # ```json と ``` を除去
             
-            suggested_personas = json.loads(response_text)
-            if not isinstance(suggested_personas, list): # リスト形式でなければエラー
+            start = response_text.find('[')
+            end = response_text.rfind(']')
+            
+            if start != -1 and end != -1 and end > start:
+                json_string = response_text[start:end+1]
+                suggested_personas = json.loads(json_string)
+            else:
+                raise ValueError("Valid JSON array not found in the response.")
+
+            if not isinstance(suggested_personas, list):
                 raise ValueError("AI response for personas is not a list.")
-            # 各ペルソナに必要なキーがあるか簡易チェック
             for persona in suggested_personas:
                 if not all(k in persona for k in ['name', 'age', '悩み']):
                     raise ValueError("Persona object missing required keys.")
 
         except (json.JSONDecodeError, ValueError) as e_parse:
             print(f"!!! Error parsing AI response for personas: {e_parse}. Raw text: {ai_response.text}")
-            # パース失敗時は、テキストをそのまま返すか、エラーメッセージと共に返す
-            # ここでは、パース失敗を示すメッセージをリストに入れて返す例
-            suggested_personas = [{"name": "AI提案解析エラー", "age": "-", "悩み": f"AIの応答を期待した形式で解析できませんでした。AIの応答: {ai_response.text[:200]}..."}]
-            toast_message_frontend = "AI提案の形式が正しくありませんでした。テキストとして表示します。"
-            # return jsonify({"message": toast_message_frontend, "suggested_personas_raw_text": ai_response.text}), 500
-
+            suggested_personas = [{"name": "AI提案解析エラー", "age": "-", "悩み": f"AIの応答を期待した形式で解析できませんでした。AIの応答: {ai_response.text}"}]
 
         print(f">>> AI Suggested Personas: {suggested_personas}")
         return jsonify({"suggested_personas": suggested_personas}), 200
@@ -513,190 +543,269 @@ def suggest_persona_draft():
         print(f"!!! Exception during AI persona suggestion: {e}")
         traceback.print_exc()
         return jsonify({"message": "AIによるペルソナ提案中にエラーが発生しました。", "error": str(e)}), 500
-    
-    
-    # 商品概要やペルソナの悩みから提供価値を提案します
+
+
+
+# app.py 内の suggest_value_proposition 関数を以下で置き換える
 
 @app.route('/api/v1/profile/suggest-value-proposition', methods=['POST'])
+
 @token_required
 def suggest_value_proposition():
-    user_profile = getattr(g, 'profile', {})
-    if not user_profile:
-        return jsonify({"message": "User profile not found."}), 403
+    user_id = g.user.id
 
-    # アカウント戦略から必要な情報を取得
-    current_product_summary = user_profile.get('main_product_summary', '未設定の商品・サービス概要')
-    main_target_audience_data = user_profile.get('main_target_audience') # JSONB想定 (リスト)
+    # 1. フロントエンドから x_account_id を受け取る
+    data = request.json
+    x_account_id = data.get('x_account_id')
+    if not x_account_id:
+        return jsonify({"error": "x_account_id is required"}), 400
+
+    # 2. x_account_id を使って、アカウントごとの戦略情報を取得する
+    try:
+        acc_strategy_res = supabase.table('account_strategies').select('*').eq('x_account_id', x_account_id).eq('user_id', user_id).maybe_single().execute()
+        account_strategy = acc_strategy_res.data if acc_strategy_res else {}
+    except Exception as e_db:
+        return jsonify({"error": "Failed to fetch account strategy", "details": str(e_db)}), 500
+
+    # 3. AIのプロンプトで使う情報を、新しい account_strategy から取得する
+    account_purpose = account_strategy.get('account_purpose', '（情報なし）')
+    main_target_audience_data = account_strategy.get('main_target_audience')
+    current_product_summary = account_strategy.get('main_product_summary', '（情報なし）')
     
-    target_audience_summary = "設定されていません。"
+    # ターゲット顧客の概要を整形
+    target_audience_summary = "（情報なし）"
     if main_target_audience_data and isinstance(main_target_audience_data, list) and len(main_target_audience_data) > 0:
-        # 簡単のため、最初のペルソナの悩みを代表として使用
         first_persona = main_target_audience_data[0]
-        target_audience_summary = f"ペルソナ「{first_persona.get('name', '未設定')}」が抱える主な悩みは「{first_persona.get('悩み', '未設定の悩み')}」です。"
-    elif user_profile.get('target_persona'): # 簡易版のフォールバック
-        target_audience_summary = user_profile.get('target_persona')
+        if isinstance(first_persona, dict):
+            name, age, problem = first_persona.get('name', ''), first_persona.get('age', ''), first_persona.get('悩み', '')
+            target_audience_summary = f"ペルソナ「{name}」（{age}）が抱える主な悩みは「{problem}」"
 
+    # AIモデルの初期化 (AIモデル設定はユーザー全体の'profiles'テーブルからでOK)
+    user_profile = getattr(g, 'profile', {})
     model = get_current_ai_model(user_profile)
     if not model:
         return jsonify({"message": "AI model could not be initialized."}), 500
 
+    # AIに渡すプロンプト（指示書）の組み立て
     prompt_parts = [
-        f"あなたは顧客の心を掴む価値提案（バリュープロポジション）を作成する専門家です。",
-        f"以下の情報を元に、このアカウントの「コアとなる提供価値」のメッセージ案を3つ、それぞれ簡潔に提案してください。",
-        f"## 参考情報:",
-        f"  - アカウントの主要商品/サービス概要: {current_product_summary}",
-        f"  - 主なターゲット顧客とその悩み（概要）: {target_audience_summary}",
-        f"  - アカウントの目的・パーパス（もしあれば）: {user_profile.get('account_purpose', '未設定')}",
-        f"## 作成指示:",
-        f"  - 各提案は、ターゲット顧客が「これは私のためのものだ！」と感じ、強く惹きつけられるような、具体的でユニークな価値を表現してください。",
-        f"  - 商品やサービスが顧客のどのような問題を解決し、どのような理想の未来をもたらすのかを明確に示してください。",
-        f"  - 簡潔かつキャッチーな表現を心がけてください（各50～100字程度）。",
-        f"  - 提案は箇条書きで、各案の前に「提案A:」「提案B:」のように記号を振ってください。"
+        f"あなたは、世界トップクラスのダイレクトレスポンスマーケティング専門のコピーライターです。",
+        f"あなたの仕事は、クライアントの戦略情報を分析し、顧客の心を一瞬で掴み、行動を喚起する、ただ一つの「最強のバリュープロポジション」を練り上げることです。",
+        f"\n## 分析対象となるアカウント戦略情報:",
+        f"  - このアカウントの目的・パーパス: {account_purpose}",
+        f"  - ターゲット顧客像（悩みや欲求）: {target_audience_summary}",
+        f"  - 主要商品/サービス概要: {current_product_summary}",
+        f"\n## あなたの思考プロセスとタスク:",
+        f"**以下の思考ステップに従って、最終的な価値提案の文章を1つだけ作成してください。**",
+        f"1. **【ステップ1: 構成要素の抽出】**: まず、頭の中で以下の3つの要素を、上記の情報から抽出・言語化してください。（このステップの結果は出力しないでください）",
+        f"    - **要素A (理想の未来)**: 顧客が最終的に手に入れる「最高の結果」や「理想のライフスタイル」。",
+        f"    - **要素B (痛みの解消)**: 顧客が現在抱えている「具体的な悩み」や「精神的な苦痛」。",
+        f"    - **要素C (独自性)**: 他にはない、このアカウント/商品だけの「ユニークな特徴」や「特別な提供方法」。",
+        f"2. **【ステップ2: 文章への統合】**: 次に、ステップ1で抽出したA, B, Cの3要素を、自然でパワフルな一つの文章（100～150字程度）に統合してください。文章は、ターゲット顧客が抱える**『痛み（要素B）』への深い共感**から始まり、**『独自性（要素C）』**によってそれを解決できることを示唆し、最終的に**『理想の未来（要素A）』**を提示する、という流れが理想的です。",
+        f"\n## 最終的なアウトプットに関する指示:",
+        f"  - ターゲット顧客が『これはまさに私のための言葉だ！』と直感的に心を揺さぶられるような、具体的で力強い言葉を選んでください。",
+        f"  - 完成された、ただ一つの「バリュープロポジション」の文章本文のみを出力してください。",
+        f"  - 前置き、解説、思考プロセスなどは一切含めないでください。"
     ]
+    
     prompt = "\n".join(prompt_parts)
     print(f">>> Suggest Value Proposition Prompt (first 500 chars): \n{prompt[:500]}...")
 
     try:
         ai_response = model.generate_content(prompt)
-        suggestions_text = ai_response.text
-        suggestions_list = [s.strip().lstrip("提案A:").lstrip("提案B:").lstrip("提案C:").strip() for s in suggestions_text.splitlines() if s.strip()]
-        main_suggestion = suggestions_list[0] if suggestions_list else "AIからの提案生成に失敗しました。"
-
-        print(f">>> AI Suggested Value Proposition: {main_suggestion}")
-        # フロントエンドが複数提案を扱えるならリストで返す
-        # return jsonify({"suggestions": suggestions_list}), 200 
-        return jsonify({"suggestion": main_suggestion}), 200
+        suggestion = ai_response.text.strip() if ai_response.text else "AIからの提案生成に失敗しました。"
+        print(f">>> AI Suggested Value Proposition: {suggestion}")
+        return jsonify({"suggestion": suggestion}), 200
     except Exception as e:
         print(f"!!! Exception during AI value proposition suggestion: {e}")
         traceback.print_exc()
-        return jsonify({"message": "AIによる提供価値提案中にエラーが発生しました。", "error": str(e)}), 500
-    
+        return jsonify({"message": "AIによる目的提案中にエラーが発生しました。", "error": str(e)}), 500
     
     # ブランドボイス詳細（トーン、キーワード、NGワード）を提案
+# app.py 内の suggest_brand_voice 関数を以下で置き換える
 
-@app.route('/api/v1/profile/suggest-brand-voice', methods=['POST'])
+
+@app.route('/api/v1/profile/suggest-brand-voice', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
 def suggest_brand_voice():
-    user_profile = getattr(g, 'profile', {})
-    if not user_profile:
-        return jsonify({"message": "User profile not found."}), 403
-
+    user_id = g.user.id
     data = request.json
-    adjectives = data.get('adjectives', '') # 例: "親しみやすい, 専門的, 熱血"
-    # reference_account_url = data.get('reference_account_url', '') # 将来的にはURLから分析も
 
+    x_account_id = data.get('x_account_id')
+    if not x_account_id:
+        return jsonify({"error": "x_account_id is required"}), 400
+    adjectives = data.get('adjectives', '')
+
+    try:
+        acc_strategy_res = supabase.table('account_strategies').select('*').eq('x_account_id', x_account_id).eq('user_id', user_id).maybe_single().execute()
+        account_strategy = acc_strategy_res.data if acc_strategy_res else {}
+    except Exception as e_db:
+        return jsonify({"error": "Failed to fetch account strategy", "details": str(e_db)}), 500
+
+    account_purpose = account_strategy.get('account_purpose', '（情報なし）')
+    main_target_audience_data = account_strategy.get('main_target_audience')
+    main_product_summary = account_strategy.get('main_product_summary', '（情報なし）')
+    
+    target_audience_summary = "（情報なし）"
+    if main_target_audience_data and isinstance(main_target_audience_data, list) and len(main_target_audience_data) > 0:
+        first_persona = main_target_audience_data[0]
+        if isinstance(first_persona, dict):
+            name, age, problem = first_persona.get('name', ''), first_persona.get('age', ''), first_persona.get('悩み', '')
+            target_audience_summary = f"ペルソナ「{name}」（{age}）が抱える主な悩みは「{problem}」"
+
+    user_profile = getattr(g, 'profile', {})
     model = get_current_ai_model(user_profile)
     if not model:
         return jsonify({"message": "AI model could not be initialized."}), 500
 
+    # プロンプト改善
     prompt_parts = [
-        f"あなたはブランドパーソナリティとSNSコミュニケーションの専門家です。",
-        f"ユーザーが目指すブランドイメージに合致する「ブランドボイス詳細」を提案してください。",
-        f"提案には、「基本トーン（簡潔な説明文）」「推奨キーワード/フレーズ（5個程度）」「避けるべきNGワード/フレーズ（3個程度）」の3点を含めてください。",
-        f"## ユーザーがイメージするブランドの雰囲気（形容詞など）:",
-        f"  - {adjectives if adjectives else '特に指定なし (ユーザーの既存設定や商品特性から推測してください)'}",
-        f"## 参考情報（ユーザーの既存設定）:",
-        f"  - アカウントの目的: {user_profile.get('account_purpose', '未設定')}",
-        f"  - ターゲット顧客像（概要）: {user_profile.get('target_persona', '未設定')}", # main_target_audience を使う方が良い
-        f"  - 主要商品/サービス概要: {user_profile.get('main_product_summary', '未設定')}",
-        f"## 作成指示:",
-        f"  - 提案するトーン、キーワード、NGワードは、上記の情報と調和し、一貫性のあるブランドイメージを形成する助けとなるようにしてください。",
-        f"  - 出力は、キーが 'tone' (文字列), 'keywords' (文字列のリスト), 'ng_words' (文字列のリスト) であるJSONオブジェクト形式で返してください。",
-        f"例: {{ \"tone\": \"読者に寄り添い、優しく励ますお姉さんのようなトーン。専門的な内容も分かりやすく解説するが、上から目線にならないように注意する。\", \"keywords\": [\"あなたならできる\", \"一緒に頑張ろう\", \"大丈夫だよ\", \"ステップバイステップ\", \"分かりやすい\"], \"ng_words\": [\"絶対\", \"簡単すぎる\", \"誰でも稼げる\"] }}"
+        f"あなたは、特定のペルソナに深く響くブランドパーソナリティを構築する専門家です。",
+        f"以下の情報を元に、ターゲット顧客から絶大な信頼を得るための「ブランドボイス詳細」を提案してください。",
+        
+        f"\n## アカウントの戦略情報:",
+        f"  - アカウントの目的と理想像: {account_purpose}",
+        f"  - ターゲット顧客像とその悩み: {target_audience_summary}",
+        f"  - ユーザーが目指すブランドの雰囲気（形容詞など）: {adjectives if adjectives else '特に指定なし (上記情報から最適なものを推測してください)'}",
+        
+        f"\n## 提案に含めるべき3つの要素:",
+        f"1. **`tone` (基本トーン)**: このアカウントがどのような「キャラクター」として振る舞うべきか、その話し方や態度を具体的に記述してください。（例：同世代の頼れる先輩、厳しくも愛のある指導者、全てを包み込む聖母など）",
+        f"2. **`keywords` (推奨キーワード)**: 上記のトーンを体現し、ターゲットに希望と行動を促すようなキーワードやフレーズを**5つ**提案してください。",
+        f"3. **`ng_words` (NGワード)**: 信頼を損なったり、安っぽく見えたりする可能性のある、このアカウントが決して使うべきではない言葉やフレーズを**3つ**提案してください。",
+
+        f"\n## 最重要の出力形式:",
+        f"  - **必ず、前置きや解説、```json ... ```のようなマークダウンは一切含めず、純粋なJSONオブジェクト（{{...}}）そのものだけを出力してください。**",
+        f"  - キーは `tone` (文字列), `keywords` (文字列のリスト), `ng_words` (文字列のリスト) の3つのみにしてください。",
+        f"  - 例: {{\"tone\": \"...\", \"keywords\": [\"...\", \"...\"], \"ng_words\": [\"...\", \"...\"]}}"
     ]
     prompt = "\n".join(prompt_parts)
     print(f">>> Suggest Brand Voice Prompt (first 500 chars): \n{prompt[:500]}...")
-    
-    # 登録済み商品情報から「主要商品群の分析サマリー」を生成
-
-@app.route('/api/v1/profile/suggest-product-summary', methods=['POST'])
-@token_required
-def suggest_product_summary():
-    user_profile = getattr(g, 'profile', {})
-    user_id = getattr(g, 'user', {}).id
-    if not user_profile or not user_id:
-        return jsonify({"message": "User context not found."}), 403
-
-    # ユーザーの商品情報をデータベースから取得
-    try:
-        products_res = supabase.table('products').select("name, description, price, target_audience, value_proposition").eq('user_id', user_id).execute()
-        if hasattr(products_res, 'error') and products_res.error:
-            print(f"!!! Error fetching user products: {products_res.error}")
-            return jsonify({"message": "ユーザーの商品情報の取得に失敗しました。", "error": str(products_res.error)}), 500
-        
-        user_products = products_res.data
-        if not user_products:
-            return jsonify({"suggestion": "登録されている商品がありません。まず商品を登録してください。"}), 200 # 提案ではなく情報提供
-
-    except Exception as e_db:
-        print(f"!!! DB Exception fetching user products: {e_db}")
-        traceback.print_exc()
-        return jsonify({"message": "商品情報取得中にデータベースエラーが発生しました。", "error": str(e_db)}), 500
-
-    model = get_current_ai_model(user_profile)
-    if not model:
-        return jsonify({"message": "AI model could not be initialized."}), 500
-
-    products_info_text = "\n".join([
-        f"- 商品名: {p.get('name', '無名')}\n  説明: {p.get('description', '説明なし')[:100]}...\n  提供価値: {p.get('value_proposition', '提供価値未設定')[:100]}..."
-        for p in user_products[:5] # 最大5商品までを参考情報とする（プロンプト長制限のため）
-    ])
-
-    prompt_parts = [
-        f"あなたは複数の商品を展開するビジネスのブランド戦略家です。",
-        f"以下のユーザーが登録している商品群の情報を元に、アカウント全体の「主要商品群の分析サマリー」を作成してください。",
-        f"このサマリーは、アカウント戦略の基盤となり、発信内容の一貫性を保つために使われます。",
-        f"## ユーザー登録商品情報（一部抜粋）:",
-        f"{products_info_text if products_info_text else '商品情報がありません。'}",
-        f"## 作成指示:",
-        f"  - 商品群全体に共通する「強み」「中心的な提供価値」「主要なターゲット層への訴求ポイント」を分析し、簡潔に（200～300字程度で）まとめてください。",
-        f"  - 個々の商品紹介ではなく、商品群全体を俯瞰した上での特徴や戦略的意義を記述してください。",
-        f"  - ポジティブで魅力的な表現を心がけてください。"
-    ]
-    prompt = "\n".join(prompt_parts)
-    print(f">>> Suggest Product Summary Prompt (first 500 chars): \n{prompt[:500]}...")
 
     try:
         ai_response = model.generate_content(prompt)
-        suggestion = ai_response.text.strip() if ai_response.text else "AIからの提案生成に失敗しました。"
         
-        print(f">>> AI Suggested Product Summary: {suggestion}")
-        return jsonify({"suggestion": suggestion}), 200
-    except Exception as e:
-        print(f"!!! Exception during AI product summary suggestion: {e}")
-        traceback.print_exc()
-        return jsonify({"message": "AIによる商品概要サマリー提案中にエラーが発生しました。", "error": str(e)}), 500
-
-    try:
-        ai_response = model.generate_content(prompt)
+        # 堅牢なJSON抽出ロジック
         try:
             import json
             response_text = ai_response.text
-            if response_text.strip().startswith("```json"):
-                response_text = response_text.strip()[7:-3].strip()
             
-            suggested_brand_voice_detail = json.loads(response_text)
-            # 必要なキーがあるか簡易チェック
+            start = response_text.find('{')
+            end = response_text.rfind('}')
+            
+            if start != -1 and end != -1 and end > start:
+                json_string = response_text[start:end+1]
+                suggested_brand_voice_detail = json.loads(json_string)
+            else:
+                raise ValueError("Valid JSON object not found in the response.")
+
             if not all(k in suggested_brand_voice_detail for k in ['tone', 'keywords', 'ng_words']):
                 raise ValueError("Brand voice object missing required keys.")
-            if not isinstance(suggested_brand_voice_detail['keywords'], list) or not isinstance(suggested_brand_voice_detail['ng_words'], list):
+            if not isinstance(suggested_brand_voice_detail.get('keywords'), list) or not isinstance(suggested_brand_voice_detail.get('ng_words'), list):
                 raise ValueError("Keywords or NG words are not lists.")
 
         except (json.JSONDecodeError, ValueError) as e_parse:
-            print(f"!!! Error parsing AI response for brand voice: {e_parse}. Raw text: {ai_response.text}")
-            # パース失敗時のフォールバック
+            print(f"!!! Error parsing AI response for brand voice: {e_parse}. Raw text: {getattr(ai_response, 'text', 'N/A')}")
             suggested_brand_voice_detail = {
-                "tone": f"AI提案の解析に失敗しました。AIの応答: {ai_response.text[:100]}...",
+                "tone": f"AI提案の解析に失敗しました。AIの応答: {getattr(ai_response, 'text', 'N/A')}",
                 "keywords": [],
                 "ng_words": []
             }
         
         print(f">>> AI Suggested Brand Voice Detail: {suggested_brand_voice_detail}")
         return jsonify({"suggestion": suggested_brand_voice_detail}), 200
+
     except Exception as e:
         print(f"!!! Exception during AI brand voice suggestion: {e}")
         traceback.print_exc()
         return jsonify({"message": "AIによるブランドボイス提案中にエラーが発生しました。", "error": str(e)}), 500
+
+
+    # 登録済み商品情報から「主要商品群の分析サマリー」を生成
+
+@app.route('/api/v1/profile/suggest-product-summary', methods=['POST', 'OPTIONS'])
+@app.route('/api/v1/profile/suggest-product-summary/', methods=['POST', 'OPTIONS'])
+@token_required
+def suggest_product_summary():
+    user_id = g.user.id
+    
+    # 1. フロントエンドから必須の x_account_id を受け取る
+    data = request.json
+    x_account_id = data.get('x_account_id')
+    if not x_account_id:
+        return jsonify({"error": "x_account_id is required"}), 400
+
+    # 2. ユーザーに紐づく商品情報をデータベースから取得
+    try:
+        products_res = supabase.table('products').select("name, description, value_proposition").eq('user_id', user_id).execute()
+        if hasattr(products_res, 'error') and products_res.error:
+            raise Exception(f"Error fetching user products: {products_res.error}")
+        
+        user_products = products_res.data
+        if not user_products:
+            return jsonify({"suggestion": "登録されている商品がありません。まず商品を登録してください。"}), 200
+
+    except Exception as e_db:
+        print(f"!!! DB Exception fetching user products: {e_db}")
+        traceback.print_exc()
+        return jsonify({"message": "商品情報取得中にデータベースエラーが発生しました。", "error": str(e_db)}), 500
+
+    # 3. x_account_id を使って、アカウントのパーパスを取得する
+    try:
+        acc_strategy_res = supabase.table('account_strategies').select('account_purpose').eq('x_account_id', x_account_id).eq('user_id', user_id).maybe_single().execute()
+        account_strategy = acc_strategy_res.data if acc_strategy_res else {}
+        account_purpose = account_strategy.get('account_purpose', '（特に設定なし）')
+    except Exception as e_db_strategy:
+        print(f"!!! DB Exception fetching account purpose: {e_db_strategy}")
+        account_purpose = '（アカウント目的の取得に失敗）'
+
+    # 4. AIモデルを初期化
+    user_profile = getattr(g, 'profile', {})
+    model = get_current_ai_model(user_profile)
+    if not model:
+        return jsonify({"message": "AI model could not be initialized."}), 500
+
+    # 5. プロンプトで使うための商品情報テキストを生成
+    products_info_text = "\n".join([
+        f"- 商品名: {p.get('name', '無名')}\n  説明: {p.get('description', '説明なし')[:100]}...\n  提供価値: {p.get('value_proposition', '提供価値未設定')[:100]}..."
+        for p in user_products[:5] # 最大5商品までを参考情報とする
+    ])
+
+    # 6. AIに渡すプロンプトを組み立てる
+    prompt_parts = [
+        f"あなたは複数の商品を展開するビジネスのブランド戦略家です。",
+        f"以下のユーザーアカウントの「目的」と「登録商品群」の情報を元に、アカウント全体の『主要商品群の分析サマリー』を作成してください。",
+        f"このサマリーは、アカウント戦略の基盤となり、今後の発信内容に一貫性を持たせるために使われます。",
+        
+        f"\n## ユーザーアカウントの目的（パーパス）:",
+        f"  - {account_purpose}",
+        
+        f"\n## ユーザー登録商品情報（一部抜粋）:",
+        f"{products_info_text}",
+        
+        f"\n## 作成指示:",
+        f"  - 上記の「アカウントの目的」を達成するために、これらの商品群がどのような役割を果たしているかを分析してください。",
+        f"  - 商品群全体に共通する「強み」「中心的な提供価値」「主要なターゲット層への訴求ポイント」を、目的と関連付けながら、簡潔に（200～300字程度で）まとめてください。",
+        f"  - 個々の商品紹介ではなく、商品群全体を俯瞰した上での戦略的意義を記述してください。",
+        f"  - ポジティブで魅力的な表現を心がけてください。",
+        f"  - 完成されたサマリーの文章本文のみを出力してください。前置きや解説は不要です。"
+    ]
+    prompt = "\n".join(prompt_parts)
+    print(f">>> Suggest Product Summary Prompt (first 500 chars): \n{prompt[:500]}...")
+
+    try:
+        # 7. AIにリクエストを送信し、結果を返す
+        ai_response = model.generate_content(prompt)
+        suggestion = ai_response.text.strip() if ai_response.text else "AIからの提案生成に失敗しました。"
+        
+        print(f">>> AI Suggested Product Summary: {suggestion}")
+        return jsonify({"suggestion": suggestion}), 200
+        
+    except Exception as e:
+        print(f"!!! Exception during AI product summary suggestion: {e}")
+        traceback.print_exc()
+        return jsonify({"message": "AIによる商品概要サマリー提案中にエラーが発生しました。", "error": str(e)}), 500
+
+# 注意: 元のコードにあった2つ目の try...except ブロックは、
+# suggest-brand-voice のロジックが誤って混入していたものと思われるため、削除しました。
 
 @app.route('/api/v1/products', methods=['GET'])
 @token_required
@@ -1828,61 +1937,41 @@ def post_tweet_now_api(tweet_id):
         return jsonify({"error": "Failed to post tweet", "details": error_message}), 500
 #generate_educational_tweet
 
-@app.route('/api/v1/educational-tweets/generate', methods=['POST'])
+# app.py 内の generate_educational_tweet 関数を以下の最終版で置き換える
+
+@app.route('/api/v1/educational-tweets/generate', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
 def generate_educational_tweet():
-    user = getattr(g, 'user', None)
-    if not user:
-        return jsonify({"message": "Authentication error."}), 401
-    
-    user_id = user.id
-
+    user_id = g.user.id
     try:
         data = request.json
-        if not data:
-            return jsonify({"message": "Invalid request: No JSON data provided."}), 400
-
-        # --- ▼ここからが修正箇所▼ ---
         x_account_id = data.get('x_account_id')
         education_element_key = data.get('education_element_key')
         theme = data.get('theme')
 
         if not all([x_account_id, education_element_key, theme]):
-            return jsonify({"error": "x_account_id, education_element_key, theme are required"}), 400
+            return jsonify({"error": "x_account_id, education_element_key, themeは必須です"}), 400
 
-        # 1. Xアカウントに紐づく戦略情報を取得
+        # 戦略情報とAIモデルの準備
         account_strategy_res = supabase.table('account_strategies').select('*').eq('x_account_id', x_account_id).eq('user_id', user_id).maybe_single().execute()
         account_strategy = account_strategy_res.data if account_strategy_res else {}
-
-        # 2. ユーザー全体のAIモデル設定を取得 (g.profileから)
         user_profile = getattr(g, 'profile', {})
-        # --- ▲ここまでが修正箇所▲ ---
-
-        print(f">>> POST /api/v1/educational-tweets/generate for x_account_id: {x_account_id}")
-        
         current_text_model = get_current_ai_model(user_profile)
         if not current_text_model:
-            return jsonify({"message": "AI model (Gemini) could not be initialized."}), 500
+            return jsonify({"message": "AI model could not be initialized."}), 500
 
+        # 教育要素のキーと名前のマッピング
         element_map = {
-            "product_analysis_summary": "商品分析の要点", "target_customer_summary": "ターゲット顧客分析の要点",
-            "edu_s1_purpose": "目的の教育", "edu_s2_trust": "信用の教育", "edu_s3_problem": "問題点の教育", 
-            "edu_s4_solution": "手段の教育", "edu_s5_investment": "投資の教育", "edu_s6_action": "行動の教育", 
-            "edu_r1_engagement_hook": "読む・見る教育", "edu_r2_repetition": "何度も聞く教育", 
-            "edu_r3_change_mindset": "変化の教育", "edu_r4_receptiveness": "素直の教育", 
-            "edu_r5_output_encouragement": "アウトプットの教育", "edu_r6_baseline_shift": "基準値の教育／覚悟の教育"
+            "edu_s1": "目的の教育", "edu_s2": "信用の教育", "edu_s3": "問題点の教育",
+            "edu_s4": "手段の教育", "edu_s5": "投資の教育", "edu_s6": "行動の教育",
+            "edu_r1": "読む・見る教育", "edu_r2": "何度も聞く教育", "edu_r3": "変化の教育",
+            "edu_r4": "素直の教育", "edu_r5": "アウトプットの教育", "edu_r6": "基準値/覚悟の教育"
         }
-        education_element_name = element_map.get(education_element_key, education_element_key) 
-
-        # --- ▼プロンプト構築部分の修正 (参照元をaccount_strategyに変更)▼ ---
+        element_key_prefix = education_element_key.split('_')[0] + '_' + education_element_key.split('_')[1]
+        
+        # プロンプトで共通して使う情報を準備
         brand_voice_detail = account_strategy.get('brand_voice_detail', {})
         brand_voice_to_use = brand_voice_detail.get('tone') if isinstance(brand_voice_detail, dict) and brand_voice_detail.get('tone') else 'プロフェッショナルかつ親しみやすい'
-        if isinstance(brand_voice_detail, dict):
-            keywords_str = ", ".join(brand_voice_detail.get('keywords', []))
-            ng_words_str = ", ".join(brand_voice_detail.get('ng_words', []))
-            if keywords_str: brand_voice_to_use += f" (キーワード: {keywords_str})"
-            if ng_words_str: brand_voice_to_use += f" (NGワード: {ng_words_str})"
-
         target_persona_to_use = "一般的な顧客"
         if account_strategy.get('main_target_audience') and isinstance(account_strategy.get('main_target_audience'), list):
             personas = account_strategy.get('main_target_audience', [])
@@ -1890,36 +1979,89 @@ def generate_educational_tweet():
                 first_persona = personas[0]
                 target_persona_to_use = f"ペルソナ「{first_persona.get('name', '未設定')}」({first_persona.get('age', '年齢不明')})のような、特に「{first_persona.get('悩み', '特定の悩み') }」を抱える層"
         
-        base_policy_key = f"{education_element_key}_base"
-        element_base_policy = account_strategy.get(base_policy_key)
+        base_policy_key = f"{element_key_prefix}_base" if element_key_prefix in element_map else f"{education_element_key}_base"
+        element_base_policy = account_strategy.get(base_policy_key, '（この教育要素に関する基本方針は未設定です）')
 
+        # --- プロンプトの組み立て ---
         prompt_parts = [
-            "あなたはプロのX（旧Twitter）マーケティングコンサルタントであり、エンゲージメントの高いツイートを作成する専門家です。",
-            f"以下のユーザー設定と指示に基づいて、魅力的で具体的なXの投稿文案を1つ作成してください。",
+            "あなたはプロのX（旧Twitter）マーケティングコンサルタントです。",
+            f"以下のユーザー設定と指示に基づき、エンゲージメントの高いツイート文案を1つ作成してください。",
             f"## ユーザーアカウント設定:",
             f"  - 発信のトーン（ブランドボイス）: {brand_voice_to_use}",
             f"  - 主なターゲット顧客像: {target_persona_to_use}",
             f"  - アカウントの目的・パーパス: {account_strategy.get('account_purpose', '未設定')}",
-            f"  - アカウントのコア提供価値: {account_strategy.get('core_value_proposition', '未設定')}",
-            f"## 今回のツイートのテーマと教育要素:",
-            f"  - 重視する教育要素: 「{education_element_name}」 ({education_element_key})",
+            f"\n## 今回のツイートのテーマ: {theme}",
         ]
-        if element_base_policy:
-            prompt_parts.append(f"  - 上記教育要素に関するアカウントの基本方針（最重要参考情報）: {element_base_policy}")
-        
+
+        # --- 教育要素ごとの分岐 ---
+        if education_element_key == 'target_customer_summary':
+            prompt_parts.append(f"## ツイート作成指示（ターゲット顧客分析の要点）:")
+            prompt_parts.append(f"  - 目的: このアカウントが「誰のための発信なのか」を明確に伝え、ターゲット顧客に「これは私のことだ！」と強く共感させる。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマを使い、ターゲット顧客の「悩み」や「欲求」を代弁するような、共感性の高いツイートを作成してください。")
+        elif education_element_key == 'product_analysis_summary':
+            prompt_parts.append(f"## ツイート作成指示（商品分析の要点）:")
+            prompt_parts.append(f"  - 目的: このアカウントが提供する商品やサービスの「核心的な価値」を伝え、読者の興味を引きつける。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマを使い、このアカウントの商品/サービスが、ターゲット顧客のどんな問題を解決し、どんな素晴らしい未来をもたらすのかを、魅力的に紹介してください。")
+        elif element_key_prefix == 'edu_s1':
+            prompt_parts.append(f"## ツイート作成指示（目的の教育）:")
+            prompt_parts.append(f"  - 目的: 読者に「こうなりたい！」という強烈な憧れや欲求を抱かせる。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマを通じて、読者が手に入れられる「理想の未来」や「最高の結果」を、五感に訴えかけるように鮮やかに描写してください。")
+        elif element_key_prefix == 'edu_s2':
+            prompt_parts.append(f"## ツイート作成指示（信用の教育）:")
+            prompt_parts.append(f"  - 目的: 発信者への絶対的な信頼と共感を獲得する。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマに関連する、あなた自身の「過去の失敗談」「苦労した経験」「それを乗り越えたストーリー」を盛り込み、誠実さと人間味を伝えてください。")
+        elif element_key_prefix == 'edu_s3':
+            prompt_parts.append(f"## ツイート作成指示（問題点の教育）:")
+            prompt_parts.append(f"  - 目的: 読者が「このままではマズい！」と自分自身の問題に気づき、危機感を抱かせる。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマを切り口に、読者が抱えているが見て見ぬふりをしている「本当の問題点」や「放置するリスク」を、ドキッとするような言葉で的確に指摘してください。")
+        elif element_key_prefix == 'edu_s4':
+            prompt_parts.append(f"## ツイート作成指示（手段の教育）:")
+            prompt_parts.append(f"  - 目的: 提示する解決策が「唯一の正しい道」であると確信させる。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマを元に、このアカウントが提唱する「解決策（手段）」がいかに優れているかを具体的に示してください。可能であれば、他の一般的な手段の欠点を暗に示唆し、選択肢を削ってください。")
+        elif element_key_prefix == 'edu_s5':
+            prompt_parts.append(f"## ツイート作成指示（投資の教育）:")
+            prompt_parts.append(f"  - 目的: 読者に「自己投資こそが最良の選択」だと理解させる。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマを通じて、目先の出費を惜しむことによる「機会損失」の大きさや、知識や環境に投資することの重要性を、説得力を持って伝えてください。")
+        elif element_key_prefix == 'edu_s6':
+            prompt_parts.append(f"## ツイート作成指示（行動の教育）:")
+            prompt_parts.append(f"  - 目的: 読者の行動しない言い訳を打ち砕き、「今すぐやるべきだ」と背中を押す。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマを通じて、「行動する人がいかに少ないか（希少性）」や「行動することで得られる圧倒的なメリット」を伝え、読者の行動へのハードルを極限まで下げてください。")
+        elif element_key_prefix == 'edu_r1':
+            prompt_parts.append(f"## ツイート作成指示（読む・見る教育）:")
+            prompt_parts.append(f"  - 目的: 読者をコンテンツに引き込み、集中させる。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマについて、ツイートの冒頭で「なぜこのツイートを読むべきか？」という理由や、読者が得られるメリットを提示してください。また、「限定性」や「希少性」を匂わせ、注意を惹きつけてください。")
+        elif element_key_prefix == 'edu_r2':
+            prompt_parts.append(f"## ツイート作成指示（何度も聞く教育）:")
+            prompt_parts.append(f"  - 目的: アカウントの重要なメッセージを読者の脳に刷り込む。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマを使って、このアカウントが最も伝えたい「中心的なメッセージ」や「価値観」を、別の切り口や言葉で繰り返し伝えてください。")
+        elif element_key_prefix == 'edu_r3':
+            prompt_parts.append(f"## ツイート作成指示（変化の教育）:")
+            prompt_parts.append(f"  - 目的: 読者の現状維持バイアスを壊し、変化への恐怖を乗り越えさせる。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマを通じて、「変化することの痛みは成長痛である」ことや、「今の安定を捨てることの重要性」を、説得力を持って伝えてください。")
+        elif element_key_prefix == 'edu_r4':
+            prompt_parts.append(f"## ツイート作成指示（素直の教育）:")
+            prompt_parts.append(f"  - 目的: 読者に自己流を捨てさせ、教えを素直に実践させる。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマを使い、「素直な人ほど成功する」という事実を、具体的な事例や比喩を用いて伝えてください。「自己流は事故流」であることを示唆するのも有効です。")
+        elif element_key_prefix == 'edu_r5':
+            prompt_parts.append(f"## ツイート作成指示（アウトプットの教育）:")
+            prompt_parts.append(f"  - 目的: 読者にアウトプットを促し、学習効果と口コミを高める。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマについて、読者が「ツイートの感想」や「学んだこと」を引用リツイートや返信でアウトプアウトしたくなるように促してください。アウトプットのメリットを具体的に提示するのも有効です。")
+        elif element_key_prefix == 'edu_r6':
+            prompt_parts.append(f"## ツイート作成指示（基準値/覚悟の教育）:")
+            prompt_parts.append(f"  - 目的: 読者の「当たり前」のレベルを破壊し、行動への覚悟を決めさせる。")
+            prompt_parts.append(f"  - 指示: {theme} というテーマに関連する、発信者自身の「圧倒的な作業量」や「常識はずれの自己投資」などのエピソードを盛り込み、読者の基準値をバグらせてください。「これくらいやらないとダメなんだ」と思わせることが重要です。")
+        else: 
+            prompt_parts.append(f"## ツイート作成指示:")
+            prompt_parts.append(f"  - {theme} というテーマについて、読者の心を動かすツイートを作成してください。")
+
+
+        prompt_parts.append(f"  - 参考方針: {element_base_policy}")
         prompt_parts.extend([
-            f"  - ユーザーが指定したツイートの具体的なテーマやキーワード: {theme}",
-            f"## 作成指示:",
-            "  - 上記の「アカウントの基本方針」を最優先の指針とし、それに沿った内容でツイートを作成してください。",
-            "  - 次に「ユーザーが指定したツイートの具体的なテーマやキーワード」を具体的に盛り込んでください。",
-            "  - ツイートは日本語で、Xの文字数制限を意識しつつ、簡潔で分かりやすいものにしてください。",
-            "  - 読者の興味を引き、いいね、リツイート、返信などのエンゲージメントを促すような内容にしてください。",
-            "  - 文脈に合わせて適切な絵文字を1～3個、効果的に使用してください。",
-            "  - 関連性が高く効果的なハッシュタグを2～3個含めてください。",
-            "  - 禁止事項: 誇大広告、誤解を招く表現、不適切な言葉遣いは避けること。",
-            "  - 提供された情報を最大限活用し、最高のツイート案を1つだけ提案してください。"
+            f"\n## 共通ルール:",
+            "  - 140字以内の日本語のツイート。",
+            "  - 読者の興味を引き、いいね、リツイート、返信などのエンゲージメントを行いたくなる文章にすること。直接エンゲージメントを促してはいけない",
+            "  - 提供された情報を最大限活用し、最高のツイート案を1つだけ提案し本文のみ出力てください。"
         ])
-        # --- ▲プロンプト構築部分の修正▲ ---
 
         prompt = "\n".join(filter(None, prompt_parts)) 
         print(f">>> Gemini Prompt for educational tweet (model: {current_text_model._model_name}):\n{prompt[:600]}...")
@@ -2034,96 +2176,107 @@ def post_dummy_tweet():
    
   
 # --- Block 5: 新しいAPIエンドポイント - 初期投稿生成 (Google検索対応) ---
-@app.route('/api/v1/initial-tweets/generate', methods=['POST'])
+# app.py 内の generate_initial_tweet 関数を以下の最終版で置き換える
+# app.py 内の generate_initial_tweet 関数を以下の最終版で置き換える
+
+@app.route('/api/v1/initial-tweets/generate', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
 def generate_initial_tweet():
-    user = getattr(g, 'user', None)
-    if not user:
-        return jsonify({"message": "Authentication error."}), 401
-    user_id = user.id
-
+    user_id = g.user.id
     try:
         data = request.json
-        if not data:
-            return jsonify({"message": "Invalid request: No JSON data provided."}), 400
-
-        # --- ▼ここからが修正箇所▼ ---
         x_account_id = data.get('x_account_id')
         initial_post_type = data.get('initial_post_type')
         theme = data.get('theme', '')
         use_Google_Search_flag = data.get('use_Google_Search', False)
 
         if not all([x_account_id, initial_post_type]):
-            return jsonify({"error": "x_account_id and initial_post_type are required"}), 400
+            return jsonify({"error": "x_account_idとinitial_post_typeは必須です"}), 400
 
-        # 1. Xアカウントに紐づく戦略情報を取得
+        # 戦略情報とAIモデルの準備
         account_strategy_res = supabase.table('account_strategies').select('*').eq('x_account_id', x_account_id).eq('user_id', user_id).maybe_single().execute()
         account_strategy = account_strategy_res.data if account_strategy_res else {}
-
-        # 2. ユーザー全体の基本情報を取得 (g.profileから)
-        user_profile = getattr(g, 'profile', {})
-        # --- ▲ここまでが修正箇所▲ ---
-
-        print(f">>> POST /api/v1/initial-tweets/generate for x_account_id: {x_account_id}")
         
+        user_profile = getattr(g, 'profile', {})
         current_text_model = get_current_ai_model(user_profile, use_Google_Search=use_Google_Search_flag)
         if not current_text_model:
             return jsonify({"message": "AI model could not be initialized."}), 500
 
-        # --- ▼プロンプト構築部分の修正 (参照元を変更)▼ ---
-        prompt_parts = ["あなたはプロのX（旧Twitter）コンテンツクリエイターです。アカウント立ち上げ初期のフォロワー獲得とエンゲージメント向上に特化しています。"]
-        prompt_parts.append("## あなたのアカウント基本情報:")
-        prompt_parts.append(f"  - アカウント名（仮）: {user_profile.get('username', '(あなたのXアカウント名)')}")
-        prompt_parts.append(f"  - アカウントの目的/パーパス: {account_strategy.get('account_purpose', '(このアカウントで達成したいこと、提供したい価値)')}")
-        prompt_parts.append(f"  - コア提供価値: {account_strategy.get('core_value_proposition', '(読者が得られる最も重要な価値)')}")
-
+        # プロンプトで共通して使う情報を準備
+        account_purpose = account_strategy.get('account_purpose', '（設定なし）')
+        core_value_proposition = account_strategy.get('core_value_proposition', '（設定なし）')
+        
+        target_persona_summary = "一般的なフォロワー"
         main_target_audience_data = account_strategy.get('main_target_audience')
-        if isinstance(main_target_audience_data, list) and main_target_audience_data:
+        if main_target_audience_data and isinstance(main_target_audience_data, list) and main_target_audience_data:
             persona_summary_parts = []
             for i, p_data in enumerate(main_target_audience_data[:2]):
-                 if isinstance(p_data, dict):
+                if isinstance(p_data, dict):
                     persona_summary_parts.append(f"ペルソナ{i+1}「{p_data.get('name', '未設定')}」({p_data.get('age', '年齢不明')})の主な悩み: {p_data.get('悩み', '未設定')}")
-            prompt_parts.append(f"  - 主なターゲット顧客像: {'; '.join(persona_summary_parts)}")
-        else:
-            prompt_parts.append("  - 主なターゲット顧客像: (まだ具体的に設定されていません)")
+            target_persona_summary = '; '.join(persona_summary_parts)
 
-        brand_voice_detail = account_strategy.get('brand_voice_detail')
-        if isinstance(brand_voice_detail, dict) and brand_voice_detail.get('tone'):
-            prompt_parts.append(f"  - ブランドボイス（トーン）: {brand_voice_detail.get('tone')}")
-            keywords_list = brand_voice_detail.get('keywords', [])
-            if keywords_list and isinstance(keywords_list, list):
-                prompt_parts.append(f"    - 推奨キーワード例: {', '.join(keywords_list[:3])}")
-        else:
-            prompt_parts.append("  - ブランドボイス（トーン）: (まだ具体的に設定されていません。例: 親しみやすく、専門的)")
+        # --- プロンプトの組み立て ---
+        prompt_parts = [
+            "あなたは、X（旧Twitter）で数々のバズを生み出してきた、言葉選びのセンスが抜群のコンテンツクリエイターです。",
+            "あなたの仕事は、クライアントのアカウント情報を元に、読者の心を掴んで離さない、多様な切り口のツイート案を無限に生み出すことです。",
+            "以下の【ツイートの素材】と【作成指示】に基づいて、最高のツイート案を1つ作成してください。",
+            
+            "\n## ツイートの素材（ヒント）:",
+            f"  - このアカウントの主人公（発信者）は、おそらく「{target_persona_summary}」という悩みを乗り越えた経験を持っています。",
+            f"  - このアカウントが最終的に届けたい想い（パーパス）は「{account_purpose}」です。",
+            f"  - このアカウントが提供する約束（コアバリュー）は「{core_value_proposition}」です。",
+        ]
 
-        prompt_parts.append("\n## 今回作成するツイートの指示:")
+       
+# --- 投稿タイプごとの分岐 ---
+        # app.py の generate_initial_tweet 関数内の if/elif/else ブロックを以下で置き換える
+
+# --- 投稿タイプごとの分岐 ---
         if initial_post_type == "follow_reason":
-            prompt_parts.append("  - ツイートの目的: このアカウントをフォローすべき理由、提供する独自の価値やフォロワーが得られる未来を明確に伝え、強いフォロー動機を喚起する。")
-            prompt_parts.append(f"  - ユーザーが指定したツイートのテーマやキーワード（最重要）: {theme if theme else 'アカウントの強みや読者の具体的なベネフィットを中心に、独自性を強調してください。'}")
-            if use_Google_Search_flag:
-                prompt_parts.append("  - 追加指示: 最新の市場動向やターゲット顧客が関心を持つであろう新しい視点・情報をGoogle検索で調査し、それを踏まえて他のアカウントとの差別化ポイントを明確にし、より説得力のあるフォローメリットを訴求してください。")
+            prompt_parts.append("\n## 今回のツイート作成指示:【フォローすべき理由】")
+            prompt_parts.append("  - **目的**: 読者の脳内に「このアカウントをフォローしないのは損失だ」という感覚を焼き付ける。")
+            prompt_parts.append("  - **思考のフレームワーク**: 以下の3つの心理的トリガーを刺激する要素を、あなたの卓越した文章力で自然に織り交ぜてください。")
+            prompt_parts.append("    1. **自己関連付け (Self-Reference)**: 読者が『これは、まさに私のことだ…』とドキッとするような、具体的な悩みや状況を指摘する『問いかけ』。")
+            prompt_parts.append("    2. **ゲインフレーム (Gain Frame)**: フォローすることで得られる『理想の未来』や『具体的なメリット』を、読者が鮮明にイメージできるように描写する。")
+            prompt_parts.append("    3. **独自性 (Uniqueness)**: このアカウントでしか得られない『ユニークな価値』や『他とは違う視点』を明確に提示する。")
+            prompt_parts.append(f"  - **テーマ**: {theme if theme else 'このアカウントをフォローすべき理由を、感情と論理の両面に訴えかける形で表現してください。'}")
+
         elif initial_post_type == "self_introduction":
-            prompt_parts.append("  - ツイートの目的: 発信者の信頼性、専門性、そして共感を呼ぶような親しみやすい人となりが伝わる自己紹介を行う。なぜこの情報発信をしているのかという背景も示唆する。")
-            prompt_parts.append(f"  - ユーザーが指定したツイートのテーマやキーワード（実績、経験、発信への想いなどの要点。最重要）: {theme if theme else 'あなたのユニークな経歴、専門分野での実績や経験、そしてこの情報発信を通じて伝えたい情熱や理念を中心に記述してください。'}")
+            prompt_parts.append("\n## 今回のツイート作成指示:【自己紹介（自分神話の断片）】")
+            prompt_parts.append("  - **目的**: 読者に強烈な共感と信頼を抱かせ、この発信者を「物語の主人公」として認識させる。")
+            prompt_parts.append("  - **思考のフレームワーク**: 以下の3つのストーリーテリング要素を、あなたの卓越した文章力でドラマチックに繋ぎ合わせてください。")
+            prompt_parts.append("    1. **共感の谷 (Valley of Empathy)**: 読者と同じか、それ以上に『ダメダメだった過去』や『壮絶な失敗談』を、正直かつ具体的に描写する。")
+            prompt_parts.append("    2. **転換点 (Turning Point)**: そのどん底の状態から這い上がる『きっかけ』となった出来事や、考え方の変化を簡潔に示す。")
+            prompt_parts.append("    3. **理念の光 (Beacon of Philosophy)**: なぜ今、この情報発信をしているのか。その根底にある『情熱』や『譲れない想い』を、力強く宣言する。")
+            prompt_parts.append(f"  - **テーマ**: {theme if theme else 'あなた自身の言葉で、読者の心を動かすショートストーリーを作成してください。'}")
+
         elif initial_post_type == "value_tips":
-            prompt_parts.append("  - ツイートの目的: ターゲット顧客がすぐに役立つと感じ、保存・拡散したくなるような具体的なTipsや、ハッとするような本質的な気づきを提供する。")
-            prompt_parts.append(f"  - ユーザーが指定したツイートのテーマやキーワード（最重要）: {theme if theme else 'あなたの専門分野に関する、読者が明日から実践できるような具体的で actionable なアドバイスを中心にしてください。'}")
-            if use_Google_Search_flag:
-                prompt_parts.append("  - 追加指示: 指定されたテーマに関する最新のテクニック、データ、ツール、または一般的な誤解を覆すような新しい情報などをGoogle検索で調査し、それを元に読者にとって価値の高い、独自性のあるTipsや気づきを提供してください。")
-        else:
-            prompt_parts.append(f"  - ユーザーが指定したツイートのテーマやキーワード: {theme if theme else '特に指定なし'}")
-            prompt_parts.append(f"  - ツイートの目的: 「{initial_post_type}」という目的に沿った、アカウント初期のフォロワー獲得とエンゲージメント向上に貢献する、魅力的で具体的なツイートを作成してください。")
+            prompt_parts.append("\n## 今回のツイート作成指示:【有益なTips（価値の証明）】")
+            prompt_parts.append("  - **目的**: 読者に『この情報だけで元が取れる！』と驚かれるレベルの、具体的で実践的な価値を提供する。")
+            prompt_parts.append("  - **思考のフレームワーク**: 以下の3つの要素を必ず含んだ、超具体的なTipsツイートを作成してください。")
+            prompt_parts.append("    1. **問題提起**: 多くの初心者やターゲット顧客が陥りがちな「具体的な間違い」や「非効率な行動」を名指しで指摘する。（例：「未経験なのに、いきなりProgateから始めてませんか？」）")
+            prompt_parts.append("    2. **解決策の提示**: その問題を解決するための、**明日からすぐに真似できる「具体的な手順（ステップ1, 2, 3...）」、「おすすめの無料ツール名」、「覚えておくべき数値」**などを、明確に提示する。**抽象的な心構えは絶対に含めないこと。**")
+            prompt_parts.append("    3. **未来の約束**: このTipsを実践することで、読者の学習効率やスキルが「どのように向上するのか」という、短期的なベネフィットを約束する。")
+            prompt_parts.append(f"  - **テーマ**: {theme if theme else 'あなたの専門分野に関する、具体的で実践的なアドバイスを提供してください。'}")
+    
+        else: # その他・自由テーマ
+            prompt_parts.append("\n## 今回のツイート作成指示:【自由テーマ】")
+            prompt_parts.append("  - **目的**: アカウント初期のエンゲージメント獲得とフォロワー増加に繋がる、魅力的で話題性のあるツイートを作成する。")
+            prompt_parts.append("  - **思考のフレームワーク**: 以下のいずれか、または複数の要素を自由に組み合わせて、あなたのセンスで最高のツイートを作成してください。『時事ネタへの専門的見解』、『ターゲット層への鋭い問いかけ』、『個人的な体験談からの学び』、『意外な統計データと考察』。")
+            prompt_parts.append(f"  - **テーマ**: {theme if theme else '自由にテーマを設定し、読者の興味を引くツイートを作成してください。'}")
+
+        # --- Google検索の指示 ---
+        if use_Google_Search_flag:
+            prompt_parts.append("  - **追加指示（Google検索）**: 上記の指示に加え、テーマに関連する最新の情報をGoogle検索で調査し、その結果（新しい事実、統計データ、意外な事例など）をツイートにさりげなく盛り込むことで、独自性と信頼性を高めてください。")
 
         prompt_parts.extend([
-            "\n## ツイート作成ルール:",
-            "  - 文字数: Xの現在の標準的な投稿文字数（140字以内を目安としつつ、状況に応じて多少の増減は可）で、簡潔かつインパクトのあるメッセージに。",
-            "  - 絵文字: 文脈に合わせて1～3個程度、効果的に使用して親しみやすさや視認性を高める。",
-            "  - ハッシュタグ: 関連性が高く、ターゲット層にリーチしやすいものを2～3個厳選して含める。",
-            "  - CTA（Call To Action）: 読者にフォロー、いいね、リプライ、プロフィールの確認といった次のアクションを自然に促すような要素を subtly に含めること。",
-            "  - 独自性: 提供されたアカウント情報を最大限に活かし、ありきたりではない、このアカウントならではのツイートを作成すること。",
-            "  - 出力形式: 生成されたツイート本文のみを返してください。前置きや後書きは一切不要です。"
+            "\n## 共通ルール:",
+            "  - **最重要**: 毎回同じ構成にせず、あなたのクリエイティビティを最大限に発揮し、自然で人間味のある「個人のつぶやき」として作成すること。",
+            "  - 140字程度の、思わず読んでしまうようなテンポの良い文章に。",
+            "  - 改行を効果的に使って、親しみやすさと読みやすさを演出すること。",
+            "  - 絵文字はペルソナ情報やアカウントの目的を読み解いて必要なら使用してください。",
+            "  - 生成されたツイート本文のみを返してください。前置きや後書きは一切不要です。"
         ])
-        # --- ▲プロンプト構築部分の修正▲ ---
 
         prompt = "\n".join(prompt_parts)
         model_name_for_log = getattr(current_text_model, '_model_name', 'N/A')
@@ -2164,7 +2317,6 @@ def generate_initial_tweet():
         print(f"!!! Exception during AI initial tweet generation: {e}")
         traceback.print_exc()
         return jsonify({"message": "AIによる初期ツイート生成中に予期せぬエラーが発生しました。", "error": str(e)}), 500
-
 # Flaskサーバーの起動
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))

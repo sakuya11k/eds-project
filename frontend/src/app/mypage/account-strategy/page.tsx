@@ -1,10 +1,10 @@
 // src/app/mypage/account-strategy/page.tsx
 'use client';
 
-import React, { useEffect, useState, FormEvent, ChangeEvent, useCallback } from 'react';
+import React, { useEffect, useState, FormEvent, ChangeEvent, useCallback, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useXAccount } from '@/context/XAccountContext';
-import XAccountGuard from '@/components/XAccountGuard'; // パスを 'context' に修正
+import XAccountGuard from '@/components/XAccountGuard';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'react-hot-toast';
@@ -26,6 +26,8 @@ type AccountStrategyFormData = {
   edu_r3_change_mindset_base: string; edu_r4_receptiveness_base: string;
   edu_r5_output_encouragement_base: string; edu_r6_baseline_shift_base: string;
 };
+
+// --- 初期データと定義 ---
 const initialStrategyFormData: AccountStrategyFormData = {
   account_purpose: '', main_target_audience: [{ id: Date.now().toString(), name: '', age: '', 悩み: '' }],
   core_value_proposition: '', brand_voice_detail: { tone: '', keywords: [''], ng_words: [''] },
@@ -51,6 +53,22 @@ const basePolicyElementsDefinition = [
     { key: 'edu_r6_baseline_shift_base', label: '12. 基準値/覚悟の教育 (基本方針)', description: "顧客の常識や基準値を引き上げ、行動への覚悟を促すためのアカウントとしての一貫した姿勢。"},
 ];
 
+// --- ヘルパーコンポーネント: 自動高さ調整テキストエリア ---
+const AutoGrowTextarea = (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => {
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    useEffect(() => {
+        if (textareaRef.current) {
+            textareaRef.current.style.height = 'auto';
+            textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
+        }
+    }, [props.value]);
+
+    return <textarea ref={textareaRef} {...props} />;
+};
+
+
+// --- コンポーネント本体 ---
 export default function AccountStrategyPage() {
   const { user, session, loading: authLoading } = useAuth();
   const { activeXAccount, isLoading: isXAccountLoading } = useXAccount();
@@ -62,7 +80,9 @@ export default function AccountStrategyPage() {
   
   const [aiLoadingStates, setAiLoadingStates] = useState<Record<string, boolean>>({});
   const [aiKeywords, setAiKeywords] = useState<Record<string, string>>({});
-
+  
+  const [isGeneratingAllPolicies, setIsGeneratingAllPolicies] = useState(false);
+  
   const apiFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     if (!session?.access_token) throw new Error("認証セッションが無効です。");
     const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}`, ...options.headers };
@@ -149,32 +169,103 @@ export default function AccountStrategyPage() {
   };
 
   const handleSuggestWithAI = async (targetField: keyof AccountStrategyFormData, apiEndpoint: string) => {
-    // この関数はバックエンドにAI提案を要求しますが、チャット機能は含みません
+    if (!activeXAccount) {
+      toast.error("操作対象のXアカウントを選択してください。");
+      return;
+    }
     const loadingKey = `${targetField}_loading`;
     setAiLoadingStates(prev => ({ ...prev, [loadingKey]: true }));
     try {
-      const payload = { ...formData, user_keywords: aiKeywords[targetField] || '' };
+      const payload: Record<string, any> = { 
+        ...formData,
+        x_account_id: activeXAccount.id 
+      };
+
+      if (targetField === 'brand_voice_detail') {
+        payload.adjectives = aiKeywords[targetField] || '';
+      } else {
+        payload.user_keywords = aiKeywords[targetField] || '';
+      }
+      
       const response = await apiFetch(apiEndpoint, { method: 'POST', body: JSON.stringify(payload) });
       
-      // ... (省略なしのAI提案ハンドリングロジック)
       if (targetField === 'main_target_audience') {
-         if (response?.suggested_personas?.length) {
-            const newPersonas = response.suggested_personas.map((p: any) => ({...p, id: Date.now().toString() + Math.random()}));
-            handleNestedChange('main_target_audience', newPersonas);
-            toast.success(`ペルソナのAI提案を反映しました。`);
-        } else throw new Error('AIからのペルソナ提案の形式が不正です。');
+         if (response?.suggested_personas && Array.isArray(response.suggested_personas)) {
+            const newPersonas = response.suggested_personas.map((p: any) => ({
+                id: Date.now().toString() + Math.random(),
+                name: p.name || '',
+                age: p.age || '',
+                悩み: p.悩み || '',
+            }));
+            setFormData(prev => ({
+                ...prev,
+                main_target_audience: newPersonas
+            }));
+            toast.success(`${newPersonas.length}件のペルソナ案を反映しました。`);
+        } else {
+            throw new Error('AIからのペルソナ提案が期待した配列形式ではありません。');
+        }
       } else if (targetField === 'brand_voice_detail') {
         if (response?.suggestion && typeof response.suggestion === 'object') {
-            handleNestedChange('brand_voice_detail', response.suggestion);
+            const { tone, keywords, ng_words } = response.suggestion;
+            handleNestedChange('brand_voice_detail', {
+                tone: tone || '',
+                keywords: keywords?.length > 0 ? keywords : [''],
+                ng_words: ng_words?.length > 0 ? ng_words : [''],
+            });
             toast.success(`ブランドボイスのAI提案を反映しました。`);
         } else throw new Error('AIからのブランドボイス提案の形式が不正です。');
       } else if (response?.suggestion && typeof response.suggestion === 'string') {
         setFormData(prev => ({...prev, [targetField]: response.suggestion }));
         toast.success(`AI提案を反映しました。`);
-      } else throw new Error('AIからの提案の形式が不正です。');
+      } else {
+        throw new Error('AIからの提案の形式が不正です。');
+      }
 
-    } catch (error) { toast.error(error instanceof Error ? error.message : "AI提案の取得に失敗しました。");
-    } finally { setAiLoadingStates(prev => ({ ...prev, [loadingKey]: false })); }
+    } catch (error) { 
+      toast.error(error instanceof Error ? error.message : "AI提案の取得に失敗しました。");
+    } finally { 
+      setAiLoadingStates(prev => ({ ...prev, [loadingKey]: false })); 
+    }
+  };
+  
+  const handleGenerateBasePolicies = async () => {
+    if (!activeXAccount) {
+      toast.error("操作対象のXアカウントを選択してください。");
+      return;
+    }
+    if (!window.confirm("現在の12の基本方針がAIによる提案で上書きされます。よろしいですか？")) {
+      return;
+    }
+    setIsGeneratingAllPolicies(true);
+    try {
+      const payload = {
+        x_account_id: activeXAccount.id,
+        account_purpose: formData.account_purpose,
+        core_value_proposition: formData.core_value_proposition,
+        main_product_summary: formData.main_product_summary,
+        main_target_audience_summary: formData.main_target_audience
+            ?.map(p => `ペルソナ「${p.name}」(${p.age}): ${p.悩み}`)
+            .join('; ') || '未設定'
+      };
+      
+      const drafts = await apiFetch('/api/v1/profile/generate-base-policies-draft', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      
+      if (drafts && typeof drafts === 'object') {
+        setFormData(prev => ({ ...prev, ...drafts }));
+        toast.success("12の基本方針のドラフトを生成しました！");
+      } else {
+        throw new Error("AIからの応答が予期した形式ではありませんでした。");
+      }
+
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "基本方針の生成に失敗しました。");
+    } finally {
+      setIsGeneratingAllPolicies(false);
+    }
   };
   
   const handleSubmit = async (e: FormEvent) => {
@@ -251,7 +342,17 @@ export default function AccountStrategyPage() {
                   <div className="flex justify-between items-center"><h4 className="font-semibold text-gray-700">ペルソナ {index + 1}</h4>{(formData.main_target_audience || []).length > 1 && (<button type="button" onClick={() => removeTargetAudience(index)} className="text-red-500 hover:text-red-700 text-xs font-medium">削除</button>)}</div>
                   <div><label htmlFor={`targetName-${index}`} className="block text-xs font-medium text-gray-600">ペルソナ名</label><input type="text" id={`targetName-${index}`} value={audience.name} onChange={(e) => handleNestedChange(`main_target_audience.${index}.name`, e.target.value)} required className="mt-1 block w-full p-2 border rounded-md"/></div>
                   <div><label htmlFor={`targetAge-${index}`} className="block text-xs font-medium text-gray-600">年齢層/属性</label><input type="text" id={`targetAge-${index}`} value={audience.age} onChange={(e) => handleNestedChange(`main_target_audience.${index}.age`, e.target.value)} className="mt-1 block w-full p-2 border rounded-md"/></div>
-                  <div><label htmlFor={`targetProblem-${index}`} className="block text-xs font-medium text-gray-600">悩み/課題</label><textarea id={`targetProblem-${index}`} value={audience.悩み} onChange={(e) => handleNestedChange(`main_target_audience.${index}.悩み`, e.target.value)} required rows={3} className="mt-1 block w-full p-2 border rounded-md"/></div>
+                  <div>
+                    <label htmlFor={`targetProblem-${index}`} className="block text-xs font-medium text-gray-600">悩み/課題</label>
+                    <AutoGrowTextarea 
+                      id={`targetProblem-${index}`} 
+                      value={audience.悩み} 
+                      onChange={(e) => handleNestedChange(`main_target_audience.${index}.悩み`, e.target.value)} 
+                      required 
+                      rows={3}
+                      className="mt-1 block w-full p-2 border rounded-md resize-none overflow-hidden"
+                    />
+                  </div>
                 </div>
               ))}
               <button type="button" onClick={addTargetAudience} className="mt-1 w-full sm:w-auto px-4 py-2 border border-dashed rounded-md text-indigo-700 hover:bg-indigo-50">+ ペルソナを追加</button>
@@ -259,6 +360,13 @@ export default function AccountStrategyPage() {
 
             <section>
               <h2 className="text-2xl font-bold text-gray-800 pb-4 mb-6 border-b">ブランドボイス</h2>
+              <div className="p-4 border rounded-lg shadow-sm bg-slate-50 mb-4">
+                <label htmlFor="brandVoiceKeywords" className="block text-sm font-semibold text-gray-700 mb-1">ブランドボイス提案用キーワード（形容詞など）</label>
+                <input type="text" id="brandVoiceKeywords" value={aiKeywords['brand_voice_detail'] || ''} onChange={(e) => setAiKeywords(prev=>({...prev, brand_voice_detail: e.target.value}))} placeholder="例: 親しみやすい, 専門的, 熱血" className="mt-1 block w-full p-2 border rounded-md mb-2"/>
+                <button type="button" onClick={() => handleSuggestWithAI('brand_voice_detail', '/api/v1/profile/suggest-brand-voice')} disabled={aiLoadingStates['brand_voice_detail_loading']} className="w-full sm:w-auto px-4 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-700 rounded-md shadow-sm">
+                    {aiLoadingStates['brand_voice_detail_loading'] ? "AIが提案作成中..." : "AIにブランドボイスを提案させる"}
+                </button>
+              </div>
               <div className="p-4 border rounded-lg bg-slate-100 space-y-4">
                 <div>
                   <label htmlFor="brandVoiceTone" className="block text-sm font-semibold text-gray-700 mb-1">基本トーン</label>
@@ -280,7 +388,12 @@ export default function AccountStrategyPage() {
             </section>
             
             <section>
-              <h2 className="text-2xl font-bold text-gray-800 pb-4 mb-6 border-b">12の教育要素 - 基本方針</h2>
+              <div className="flex justify-between items-center pb-4 mb-6 border-b">
+                  <h2 className="text-2xl font-bold text-gray-800">12の教育要素 - 基本方針</h2>
+                  <button type="button" onClick={handleGenerateBasePolicies} disabled={isGeneratingAllPolicies} className="px-4 py-2 text-sm font-medium text-white bg-green-600 hover:bg-green-700 rounded-md shadow-sm">
+                      {isGeneratingAllPolicies ? "AIがドラフト生成中..." : "12方針をAIで一括生成"}
+                  </button>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {basePolicyElementsDefinition.map(el => (
                   <div key={el.key}>
