@@ -17,7 +17,9 @@ type BrandVoiceDetail = {
   tone: string; keywords: string[]; ng_words: string[];
 };
 type AccountStrategyFormData = {
-  account_purpose: string; main_target_audience: TargetAudienceItem[] | null;
+  account_purpose: string;
+  persona_profile_for_ai: string; // 発信者プロフィール(AI用)の型定義
+  main_target_audience: TargetAudienceItem[] | null;
   core_value_proposition: string; brand_voice_detail: BrandVoiceDetail;
   main_product_summary: string;
   edu_s1_purpose_base: string; edu_s2_trust_base: string; edu_s3_problem_base: string;
@@ -29,7 +31,9 @@ type AccountStrategyFormData = {
 
 // --- 初期データと定義 ---
 const initialStrategyFormData: AccountStrategyFormData = {
-  account_purpose: '', main_target_audience: [{ id: Date.now().toString(), name: '', age: '', 悩み: '' }],
+  account_purpose: '',
+  persona_profile_for_ai: '', // 発信者プロフィール(AI用)の初期値
+  main_target_audience: [{ id: Date.now().toString(), name: '', age: '', 悩み: '' }],
   core_value_proposition: '', brand_voice_detail: { tone: '', keywords: [''], ng_words: [''] },
   main_product_summary: '',
   edu_s1_purpose_base: '', edu_s2_trust_base: '', edu_s3_problem_base: '',
@@ -323,6 +327,15 @@ export default function AccountStrategyPage() {
               <h2 className="text-2xl font-bold text-gray-800 pb-4 mb-6 border-b">主要戦略</h2>
               <div className="space-y-6">
                 {renderTextAreaWithAI('account_purpose', 'アカウントの基本理念・パーパス', 'このアカウントを通じて何を達成したいか、どのような価値を提供したいのかを記述します。', '/api/v1/profile/suggest-purpose')}
+                
+                {/* === ここが追加された項目です === */}
+                {renderTextAreaWithAI(
+                  'persona_profile_for_ai', 
+                  '発信者のプロフィール（AI用）', 
+                  'AIがあなたになりきってツイートを生成するための設定です。現在のあなたの「立場」「ステージ」「実績」などを具体的に記述してください。AIはこの設定をツイート生成時に参照します。', 
+                  '/api/v1/profile/suggest-persona-profile' // バックエンドに同名APIを後で作成
+                )}
+
                 {renderTextAreaWithAI('core_value_proposition', 'アカウントのコア提供価値', '読者が継続的に得られる最も重要な価値（ベネフィット）は何ですか？', '/api/v1/profile/suggest-value-proposition')}
                 {renderTextAreaWithAI('main_product_summary', '主要商品群の分析サマリー', '提供する商品やサービス群に共通する特徴や提供価値を記述します。', '/api/v1/profile/suggest-product-summary')}
               </div>

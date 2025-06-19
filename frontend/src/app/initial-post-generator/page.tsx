@@ -2,28 +2,38 @@
 
 import React, { useEffect, useState, FormEvent, ChangeEvent, useCallback } from 'react'
 import { useAuth } from '@/context/AuthContext'
-import { useXAccount } from '@/context/XAccountContext' // ★インポート
-import XAccountGuard from '@/components/XAccountGuard' // ★インポート
+import { useXAccount } from '@/context/XAccountContext'
+import XAccountGuard from '@/components/XAccountGuard'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'react-hot-toast'
 
-// --- 型定義 (元のまま) ---
+// --- 型定義 ---
 type InitialPostType = "follow_reason" | "self_introduction" | "value_tips" | "other";
 type InitialPostTypeOption = { value: InitialPostType | ""; label: string; placeholder: string; enableGoogleSearch?: boolean; };
 const initialPostTypeOptions: InitialPostTypeOption[] = [
   { value: "", label: "初期投稿のタイプを選択してください", placeholder: "まずは投稿タイプを選択してください。", enableGoogleSearch: false },
   { value: "follow_reason", label: "フォローすべき理由（目的/価値提示）", placeholder: "あなたのアカウントをフォローすることで、読者はどんな未来や価値を得られますか？それを端的に示すキーワードを入力してください。", enableGoogleSearch: true },
   { value: "self_introduction", label: "自己紹介（信頼/パーソナリティ）", placeholder: "あなたは何者で、なぜこの情報を発信するのですか？実績やストーリーがあれば、その要点を入力してください。", enableGoogleSearch: false },
-  { value: "value_tips", label: "即時的な価値提供（Tips/気づき）", placeholder: "あなたの専門分野に関する、読者が明日から実践できるような具体的でactionableなアドバイスのテーマを入力してください。", enableGoogleSearch: true },
+  { value: "value_tips", label: "即時的な価値提供（Tips/気づき）", placeholder: "具体的なアドバイスのテーマを入力（任意・空欄の場合はAIが最適なテーマを考えます）", enableGoogleSearch: true },
   { value: "other", label: "その他・自由テーマ", placeholder: "AIに生成してほしいツイートのテーマや概要、キーワードなどを自由に入力してください。", enableGoogleSearch: true },
 ];
+
+// ★★★ 「権威性の型」の選択肢を定義 ★★★
+const authorityFormatOptions = [
+  { value: "", label: "おまかせ（AIが最適な型を自動選択）" },
+  { value: "【問題解決型】", label: "問題解決型" },
+  { value: "【ノウハウ公開型】", label: "ノウハウ公開型" },
+  { value: "【気づき共有型】", label: "気づき共有型" },
+  { value: "【比較検証型】", label: "比較検証型" },
+];
+
 type GroundingCitation = { uri?: string | null; title?: string | null; publication_date?: string | null; };
 type GroundingInfo = { retrieved_queries?: string[]; citations?: GroundingCitation[]; } | null;
 
 export default function InitialPostGeneratorPage() {
   const { user, session, loading: authLoading } = useAuth();
-  const { activeXAccount, isLoading: isXAccountLoading } = useXAccount(); // ★activeXAccountを取得
+  const { activeXAccount, isLoading: isXAccountLoading } = useXAccount();
   const router = useRouter();
 
   const [selectedPostType, setSelectedPostType] = useState<InitialPostType | "">("");
@@ -35,11 +45,13 @@ export default function InitialPostGeneratorPage() {
   const [isSavingDraft, setIsSavingDraft] = useState<boolean>(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
+  // ★★★ 選択された「権威性の型」を保持するStateを追加 ★★★
+  const [selectedAuthorityFormat, setSelectedAuthorityFormat] = useState<string>("");
+
   useEffect(() => {
     if (!authLoading && !user) router.push('/login');
   }, [user, authLoading, router]);
   
-  // ★ API通信をfetchベースに統一
   const apiFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     if (!session?.access_token) throw new Error("認証セッションが無効です。");
     const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}`, ...options.headers };
@@ -57,23 +69,32 @@ export default function InitialPostGeneratorPage() {
     setSelectedPostType(newType);
     const selectedOption = initialPostTypeOptions.find(opt => opt.value === newType);
     if (selectedOption && !selectedOption.enableGoogleSearch) { setUseGoogleSearch(false); }
+    // 投稿タイプが変わったら、型の選択もリセットする
+    if (newType !== 'value_tips') {
+        setSelectedAuthorityFormat("");
+    }
     setGeneratedTweet(null); setGroundingInfo(null);
   };
 
-  // ★ AIツイート生成処理をactiveXAccountに連動
   const handleGenerateTweet = async (e: FormEvent) => {
     e.preventDefault();
     if (!user || !activeXAccount) { toast.error('アカウントを選択してください。'); return; }
     if (!selectedPostType) { toast.error('初期投稿のタイプを選択してください。'); return; }
-    if (!theme.trim()) { toast.error('ツイートのテーマを入力してください。'); return; }
+    
+    if (selectedPostType !== 'value_tips' && !theme.trim()) { 
+      toast.error('ツイートのテーマを入力してください。'); 
+      return; 
+    }
 
     setIsGenerating(true); setGeneratedTweet(null); setGroundingInfo(null); setApiError(null);
     try {
       const payload = {
-        x_account_id: activeXAccount.id, // ★ activeXAccountのIDを渡す
+        x_account_id: activeXAccount.id,
         initial_post_type: selectedPostType,
         theme: theme,
         use_Google_Search: useGoogleSearch,
+        // ★★★ 選択された型をペイロードに追加 ★★★
+        selected_authority_format: selectedAuthorityFormat,
       };
       const response = await apiFetch('/api/v1/initial-tweets/generate', { method: 'POST', body: JSON.stringify(payload) });
       if (response?.generated_tweet) {
@@ -91,7 +112,6 @@ export default function InitialPostGeneratorPage() {
     }
   };
 
-  // ★ 下書き保存処理をactiveXAccountに連動
   const handleSaveTweetDraft = async () => {
     if (!generatedTweet) { toast.error('保存するツイートがありません。'); return; }
     if (!user || !activeXAccount) { toast.error('アカウントを選択してください。'); return; }
@@ -99,7 +119,7 @@ export default function InitialPostGeneratorPage() {
     setIsSavingDraft(true); setApiError(null);
     try {
       const payload = {
-        x_account_id: activeXAccount.id, // ★ activeXAccountのIDを渡す
+        x_account_id: activeXAccount.id,
         content: generatedTweet,
         status: 'draft',
       };
@@ -139,9 +159,42 @@ export default function InitialPostGeneratorPage() {
               {initialPostTypeOptions.map((option) => (<option key={option.value} value={option.value} disabled={option.value === ""}>{option.label}</option>))}
             </select>
           </div>
+
+          {/* ★★★ ここからが追加UI ★★★ */}
+          {selectedPostType === 'value_tips' && (
+            <div>
+              <label htmlFor="authorityFormat" className="block text-sm font-semibold text-gray-700 mb-2">
+                2. 権威性の型を選択 (任意)
+              </label>
+              <select 
+                id="authorityFormat" 
+                value={selectedAuthorityFormat} 
+                onChange={(e) => setSelectedAuthorityFormat(e.target.value)}
+                className="mt-1 block w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500"
+              >
+                {authorityFormatOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {/* ★★★ 追加UIここまで ★★★ */}
+
           <div>
-            <label htmlFor="theme" className="block text-sm font-semibold text-gray-700 mb-2">2. ツイートのテーマやキーワードを入力</label>
-            <textarea id="theme" rows={5} value={theme} onChange={(e) => setTheme(e.target.value)} placeholder={currentPlaceholder} required className="mt-1 block w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500" disabled={!selectedPostType}/>
+            <label htmlFor="theme" className="block text-sm font-semibold text-gray-700 mb-2">
+              {selectedPostType === 'value_tips' ? '3.' : '2.'} ツイートのテーマやキーワードを入力
+            </label>
+            <textarea 
+              id="theme" 
+              rows={5} 
+              value={theme} 
+              onChange={(e) => setTheme(e.target.value)} 
+              placeholder={currentPlaceholder} 
+              className="mt-1 block w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500" 
+              disabled={!selectedPostType}
+            />
           </div>
           {showGoogleSearchOption && selectedPostType && (
             <div className="flex items-center">
