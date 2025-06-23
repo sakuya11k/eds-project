@@ -1,11 +1,11 @@
-// frontend/src/app/dashboard/page.tsx
+
 
 'use client';
 
 import { useXAccount, XAccount } from '@/context/XAccountContext'; // XAccount型をインポート
 import { FormEvent, useState } from 'react';
 
-// ルール#1準拠: クライアントコンポーネントなのでmetadataはエクスポートしない
+
 
 export default function DashboardPage() {
   const { 
@@ -85,7 +85,6 @@ export default function DashboardPage() {
 
       <div className="space-y-4">
         {xAccounts.length > 0 ? (
-          // ルール#3準拠: accountに型を明示的に指定
           xAccounts.map((account: XAccount) => (
             <div key={account.id} className="flex items-center justify-between p-4 border rounded-lg shadow-sm bg-white dark:bg-gray-800 dark:border-gray-700">
               <div>

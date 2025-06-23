@@ -4,7 +4,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useCa
 import { useAuth } from './AuthContext';
 import { toast } from 'react-hot-toast';
 
-// --- 型定義 (変更なし) ---
+// --- 型定義  ---
 export interface XAccount {
   id: string;
   x_username: string;
@@ -24,7 +24,6 @@ interface XAccountContextType {
   xAccounts: XAccount[];
   activeXAccount: XAccount | null;
   isLoading: boolean;
-  // isLoading が false で、かつ xAccounts が 0件かどうかを判定しやすくするフラグを追加
   isInitialized: boolean; 
   addXAccount: (accountData: NewXAccountData) => Promise<void>;
   deleteXAccount: (accountId: string) => Promise<void>;
@@ -32,7 +31,7 @@ interface XAccountContextType {
   fetchXAccounts: () => Promise<void>;
 }
 
-// --- Contextの作成 (変更なし) ---
+// --- Contextの作成  ---
 const XAccountContext = createContext<XAccountContextType | undefined>(undefined);
 
 // --- Providerコンポーネント ---
@@ -43,10 +42,9 @@ export const XAccountProvider = ({ children }: { children: ReactNode }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [isInitialized, setIsInitialized] = useState(false); // 初期化フラグを追加
 
-  // apiFetch関数をより堅牢に修正
+  // apiFetch関数
   const apiFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     if (!session?.access_token) {
-      // このエラーは開発中にのみ発生するはず。ユーザーにはより一般的なメッセージを表示。
       console.error("Authentication token is missing.");
       throw new Error("認証セッションが無効です。再度ログインしてください。");
     }
@@ -61,31 +59,29 @@ export const XAccountProvider = ({ children }: { children: ReactNode }) => {
       const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}${url}`, { ...options, headers });
       
       if (!response.ok) {
-          // エラーレスポンスのボディを安全に解析
           let errorBody;
           try {
             errorBody = await response.json();
           } catch (e) {
-            // JSON解析に失敗した場合 (e.g., 502 Bad Gateway with HTML response)
             throw new Error(`サーバーから予期せぬ応答がありました (Status: ${response.status})`);
           }
-          // バックエンドからのエラーメッセージを優先して使用
+
           const errorMessage = errorBody?.message || errorBody?.error || `APIリクエストエラー (Status: ${response.status})`;
           throw new Error(errorMessage);
       }
       
-      // No Content (204) の場合、nullを返す (DELETEなどで利用)
+
       if (response.status === 204) {
           return null;
       }
       
-      // 成功した場合、JSONを返す
+
       return response.json();
 
     } catch (error) {
-       // ネットワークエラーなどをここでキャッチ
+
        console.error(`API Fetch Error: ${url}`, error);
-       // 再スローして、各呼び出し元で処理させる
+
        throw error;
     }
   }, [session]);
@@ -94,23 +90,17 @@ export const XAccountProvider = ({ children }: { children: ReactNode }) => {
     // ユーザーセッションがない場合は何もせず、初期状態を維持
     if (!user || !session) {
       setIsLoading(false);
-      setIsInitialized(true); // 認証情報がないため、初期化完了とみなす
+      setIsInitialized(true);
       return;
     }
     
     setIsLoading(true);
     try {
-      // apiFetchを呼び出し、返り値の型を明示
       const accounts: XAccount[] = await apiFetch('/api/v1/x-accounts');
-      
-      // accountsが配列でない、またはnull/undefinedの場合は空配列として扱う
+
       const validAccounts = Array.isArray(accounts) ? accounts : [];
       setXAccounts(validAccounts);
 
-      // アクティブなアカウントを決定するロジックをより安全に
-      // 1. is_active: true を探す
-      // 2. なければ、配列の最初の要素
-      // 3. 配列が空なら null
       const active = validAccounts.find((acc) => acc.is_active) ?? (validAccounts.length > 0 ? validAccounts[0] : null);
       setActiveXAccountState(active);
 
@@ -142,7 +132,6 @@ export const XAccountProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [user, session, fetchXAccounts]);
 
-  // 各操作関数を修正し、トースト通知を追加
   const addXAccount = async (accountData: NewXAccountData) => {
     try {
       setIsLoading(true);
@@ -191,13 +180,11 @@ export const XAccountProvider = ({ children }: { children: ReactNode }) => {
 
       await apiFetch(`/api/v1/x-accounts/${accountId}/activate`, { method: 'PUT' });
       toast.success(`${newActiveAccount?.x_username} に切り替えました。`);
-      // 成功後、念のためサーバーの最新情報で再同期
       await fetchXAccounts();
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'アカウントの切り替えに失敗しました。';
       toast.error(errorMessage);
-      // エラー時は状態を元に戻すために再フェッチ
       await fetchXAccounts();
     }
   };
@@ -216,7 +203,7 @@ export const XAccountProvider = ({ children }: { children: ReactNode }) => {
   return <XAccountContext.Provider value={value}>{children}</XAccountContext.Provider>;
 };
 
-// --- Custom Hook (変更なし) ---
+// --- Custom Hook  ---
 export const useXAccount = (): XAccountContextType => {
   const context = useContext(XAccountContext);
   if (context === undefined) {

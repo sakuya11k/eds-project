@@ -1,6 +1,4 @@
 
-# app.py の import ブロック
-
 import os
 from flask import Flask, jsonify, request, g
 from flask_cors import CORS
@@ -10,20 +8,15 @@ from functools import wraps
 import datetime
 import traceback
 import time
-
-# ▼▼▼【ここからが新しいSDKの正しいimport】▼▼▼
 from google import genai
-# 新しいSDKでは、typesモジュールを別名でインポートするのが作法
 from google.genai import types as genai_types
-# ▲▲▲【ここまでが新しいSDKの正しいimport】▲▲▲
-
 import tweepy
 from cryptography.fernet import Fernet
 import json
 import re 
 import requests
 from bs4 import BeautifulSoup
-# .envファイルを読み込む
+
 load_dotenv()
 app = Flask(__name__)
 
@@ -87,10 +80,9 @@ class EncryptionManager:
         if not encrypted_data: return ""
         return cipher_suite.decrypt(encrypted_data.encode()).decode()
 
-# ▼▼▼▼▼▼▼▼▼【ここからが修正箇所】▼▼▼▼▼▼▼▼▼
+
 
 # --- AIモデル準備用のヘルパー関数 ---
-# app.py 内の call_gemini_api 関数を以下の最終版で置き換える
 
 def call_gemini_api(user_profile, contents, use_Google_Search=False, system_instruction_text=None):
     """
@@ -119,11 +111,11 @@ def call_gemini_api(user_profile, contents, use_Google_Search=False, system_inst
 
         print(f">>> Calling Gemini API with model: {model_id} (Search: {use_Google_Search})")
         
-        # 4. 新しいSDKの正しい作法でAPIを呼び出す
+        # 4. 新しいSDKの作法でAPIを呼び出す
         response = client.models.generate_content(
             model=model_id,
             contents=contents,
-            config=config # 正しい引数名 `config` を使用
+            config=config 
         )
         return response
 
@@ -133,7 +125,7 @@ def call_gemini_api(user_profile, contents, use_Google_Search=False, system_inst
     
 
 
-# --- 認証デコレーター (デバッグログ追加版) ---
+# --- 認証デコレーター ---
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -357,9 +349,8 @@ def handle_account_strategy(x_account_id):
             if not data: 
                 return jsonify({"error": "Invalid JSON"}), 400
             
-            # ★★★ ここから修正・改良箇所 ★★★
 
-            # 1. 更新する可能性のあるフィールドをすべて定義
+            # 1. フィールドをすべて定義
             allowed_fields = [
                 'account_purpose', 'persona_profile_for_ai', 'core_value_proposition', 
                 'main_product_summary', 'main_target_audience', 'brand_voice_detail',
@@ -378,16 +369,16 @@ def handle_account_strategy(x_account_id):
             data_to_update['user_id'] = user_id
             data_to_update['updated_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             
-            # upsertを使用してデータの挿入または更新を実行
+           
             res = supabase.table('account_strategies').upsert(data_to_update, on_conflict='x_account_id').execute()
             
-            # ★★★ 修正・改良ここまで ★★★
+            
 
             if res.data:
                 return jsonify(res.data[0]), 200
             else:
                 error_details = res.error.message if hasattr(res, 'error') and res.error else "Unknown DB error"
-                # Supabaseのエラーレスポンスをより詳細にログ出力
+                
                 print(f"!!! Supabase upsert error for user {user_id}: {error_details}")
                 return jsonify({"error": "Failed to update strategy", "details": error_details}), 500
     
@@ -461,7 +452,7 @@ def suggest_account_purpose():
 
         # 3. プロンプトを組み立てる
         prompt_parts = [
-            # プロンプト改善：役割設定をより具体的に
+            
             "あなたは、個人のブランドストーリーを構築する、一流のストーリーテラー兼コピーライターです。",
             "あなたの仕事は、クライアントの断片的な情報から、その人の「物語の始まり」となる、魂のこもった「基本理念・パーパス」を紡ぎ出すことです。",
             "以下の情報を元に、読者の心を揺さぶり、希望を与える「基本理念・パーパス」のドラフトを1つ、250～350字程度で作成してください。",
@@ -471,7 +462,7 @@ def suggest_account_purpose():
             f"  - クライアントが表現したいこと（キーワード）: {user_keywords if user_keywords else '特に指定なし'}",
             f"  - 提供予定の商品/サービス概要: {current_product_summary}",
             
-            # プロンプト改善：構成をより明確に指示
+           
             f"\n## 作成指示:",
             "文章の構成は、以下の流れを意識してください。",
             "1. **共感のフック**: まず、ターゲットが心の中でつぶやいているような『悩み』や『諦め』の言葉から始め、強く引き込みます。",
@@ -485,7 +476,7 @@ def suggest_account_purpose():
         prompt = "\n".join(prompt_parts)
         print(f">>> Suggest Account Purpose Prompt: \n{prompt[:500]}...")
         
-        # 4. 新しいSDKの作法でAPIを呼び出す
+        # 4. 新しいSDKでAPIを呼び出す
         user_profile = getattr(g, 'profile', {})
         model_id = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
         
@@ -505,9 +496,9 @@ def suggest_account_purpose():
         print(f"!!! Exception during AI purpose suggestion: {e}")
         traceback.print_exc()
         return jsonify({"message": "AIによる目的提案中にエラーが発生しました。", "error": str(e)}), 500
-    # ペルソナ案を複数提案
-# suggest_persona_draft 
+    
 
+# ペルソナ案を複数提案
 
 @app.route('/api/v1/profile/suggest-persona-draft', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
@@ -644,8 +635,8 @@ def suggest_persona_draft():
         print(f"!!! Exception during AI persona suggestion: {e}")
         traceback.print_exc()
         return jsonify({"message": "AIによるペルソナ提案中にエラーが発生しました。", "error": str(e)}), 500
-# app.py 内の suggest_value_proposition 関数を以下で置き換える
-# app.py 内の suggest_value_proposition 関数を以下の最終版で置き換える
+
+#目的の提案
 
 @app.route('/api/v1/profile/suggest-value-proposition', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
@@ -706,7 +697,7 @@ def suggest_value_proposition():
         prompt = "\n".join(prompt_parts)
         print(f">>> Suggest Value Proposition Prompt: \n{prompt[:500]}...")
 
-        # 3. 新しいSDKの作法でAPIを呼び出す
+        # 3. 新しいSDKでAPIを呼び出す
         user_profile = getattr(g, 'profile', {})
         model_id = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
         
@@ -727,10 +718,7 @@ def suggest_value_proposition():
         traceback.print_exc()
         return jsonify({"message": "AIによる目的提案中にエラーが発生しました。", "error": str(e)}), 500
     
-    # ブランドボイス詳細（トーン、キーワード、NGワード）を提案
-# app.py 内の suggest_brand_voice 関数を以下で置き換える
-
-# app.py 内の suggest_brand_voice 関数を以下の最終版で置き換える
+# ブランドボイス詳細（トーン、キーワード、NGワード）を提案
 
 @app.route('/api/v1/profile/suggest-brand-voice', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
@@ -748,7 +736,7 @@ def suggest_brand_voice():
         x_account_id = data.get('x_account_id')
         if not x_account_id:
             return jsonify({"error": "x_account_id is required"}), 400
-        # フロントエンドからは 'adjectives' キーで送られてくることを想定
+        
         adjectives = data.get('adjectives', '')
         
     except Exception as e_parse:
@@ -769,7 +757,7 @@ def suggest_brand_voice():
                 name, age, problem = first_persona.get('name', ''), first_persona.get('age', ''), first_persona.get('悩み', '')
                 target_audience_summary = f"ペルソナ「{name}」（{age}）が抱える主な悩みは「{problem}」"
         
-        # 2. プロンプトを組み立てる（改善版）
+        # 2. プロンプトを組み立てる
         prompt_parts = [
             "あなたは、ターゲット顧客の心に深く響く「ブランドボイス」を設計する、一流のブランド・パーソナリティ戦略家です。",
             "単にトーン＆マナーを提案するだけでなく、そのボイスが『なぜ』効果的なのか、そして『どのように』使うのかまでを具体的に提示してください。",
@@ -794,7 +782,7 @@ def suggest_brand_voice():
         prompt = "\n".join(prompt_parts)
         print(f">>> Suggest Brand Voice Prompt (Evolved): \n{prompt[:500]}...")
 
-        # 3. 新しいSDKの作法でAPIを呼び出す
+        # 3. 新しいSDKでAPIを呼び出す
         user_profile = getattr(g, 'profile', {})
         model_id = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
         
@@ -809,7 +797,7 @@ def suggest_brand_voice():
             config=config
         )
 
-        # 4. 堅牢なJSON抽出ロジック
+        # 4. JSON抽出ロジック
         try:
             response_text = response.text
             start = response_text.find('{')
@@ -827,7 +815,7 @@ def suggest_brand_voice():
                 "ng_words": suggested_brand_voice_detail.get("ng_words", [])
             }
             
-            # (参考として、理由と例文もログには出力しておく)
+            
             print(f">>> Reason: {suggested_brand_voice_detail.get('reason', 'N/A')}")
             print(f">>> Example Tweet: {suggested_brand_voice_detail.get('example_tweet', 'N/A')}")
 
@@ -847,8 +835,7 @@ def suggest_brand_voice():
         traceback.print_exc()
         return jsonify({"message": "AIによるブランドボイス提案中にエラーが発生しました。", "error": str(e)}), 500
 
-    # 登録済み商品情報から「主要商品群の分析サマリー」を生成
-# app.py 内の suggest_product_summary 関数を以下の最終版で置き換える
+# 登録済み商品情報から「主要商品群の分析サマリー」を生成
 
 @app.route('/api/v1/profile/suggest-product-summary', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
@@ -898,7 +885,7 @@ def suggest_product_summary():
             for p in user_products[:5]
         ])
 
-        # 4. プロンプトを組み立てる（改善版）
+        # 4. プロンプトを組み立てる
         prompt_parts = [
             "あなたは、複数の商品を組み合わせて一つの強力なブランドメッセージを構築する、天才的なブランドプロデューサーです。",
             "以下の情報を分析し、この商品群全体を象徴する「コンセプト」と、それに基づいた具体的な「発信テーマ案」を含む、『主要商品群の分析サマリー』を作成してください。",
@@ -923,7 +910,7 @@ def suggest_product_summary():
         prompt = "\n".join(prompt_parts)
         print(f">>> Suggest Product Summary Prompt (Evolved): \n{prompt[:500]}...")
 
-        # 5. 新しいSDKの作法でAPIを呼び出す
+        # 5. 新しいSDKでAPIを呼び出す
         user_profile = getattr(g, 'profile', {})
         model_id = user_profile.get('preferred_ai_model', 'gemini-2.5-flash-latest')
         
@@ -943,8 +930,8 @@ def suggest_product_summary():
         print(f"!!! Exception during AI product summary suggestion: {e}")
         traceback.print_exc()
         return jsonify({"message": "AIによる商品概要サマリー提案中にエラーが発生しました。", "error": str(e)}), 500
-# suggest-brand-voice のロジックが誤って混入していたものと思われるため、削除しました。
 
+#商品取得
 @app.route('/api/v1/products', methods=['GET'])
 @token_required
 def get_products():
@@ -960,9 +947,7 @@ def get_products():
     except Exception as e: traceback.print_exc(); return jsonify({"message": "Error fetching products", "error": str(e)}), 500
     
     
-    # アカウント戦略の各項目についてAIと対話形式
-
-# app.py 内の chat_account_strategy_field 関数を以下の最終版で置き換える
+# アカウント戦略の各項目についてAIと対話形式
 
 @app.route('/api/v1/profile/chat-generic-field', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
@@ -1003,7 +988,7 @@ def chat_account_strategy_field():
         brand_voice_detail = account_strategy.get('brand_voice_detail', {})
         acc_brand_voice = brand_voice_detail.get('tone') if isinstance(brand_voice_detail, dict) else 'プロフェッショナル'
 
-        # 2. システム指示（プロンプト）を組み立てる（改善版）
+        # 2. システム指示（プロンプト）を組み立てる
         system_instruction_parts = [
             "あなたは、クライアントの曖昧な思考を、鋭い質問と具体的な提案によって明確な戦略へと昇華させる、超一流のブランド戦略コンサルタントです。",
             "あなたの役割は、単に質問に答えるのではなく、対話を通じてクライアント自身に『ハッ』とさせ、より深いレベルで思考を整理させることです。",
@@ -1026,11 +1011,11 @@ def chat_account_strategy_field():
         ]
         system_instruction_text = "\n".join(system_instruction_parts)
 
-        # 3. 新しいSDKの作法でチャットセッションを開始・継続する
+        # 3. 新しいSDKでチャットセッションを開始・継続する
         user_profile = getattr(g, 'profile', {})
         model_id = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
         
-        # 新しいSDKでは、client.chats.create() でチャットを開始する
+        #  チャットを開始する
         chat_session = client.chats.create(
             model=model_id,
             history=chat_history_frontend, # フロントからの履歴をそのまま渡せる
@@ -1057,8 +1042,6 @@ def chat_account_strategy_field():
 
 
 # 主要戦略情報を基に12の基本方針ドラフトを一括生成
-# app.py 内の generate_account_base_policies_draft 関数を以下の最終版で置き換える
-# app.py 内の generate_account_base_policies_draft 関数を以下の最終版で置き換える
 
 @app.route('/api/v1/profile/generate-base-policies-draft', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
@@ -1092,7 +1075,7 @@ def generate_account_base_policies_draft():
         brand_voice_detail = account_strategy.get('brand_voice_detail', {})
         brand_voice_tone = brand_voice_detail.get('tone') if isinstance(brand_voice_detail, dict) else 'プロフェッショナルかつ親しみやすい'
         
-        # ▼▼▼【ここが修正点】あなたがまとめてくれた「本質」の定義を使用▼▼▼
+        
         base_policies_elements = [
             {'key': 'edu_s1_purpose_base', 'name': '目的の教育', 'desc': 'アカウント全体として、顧客が目指すべき理想の未来や提供する究極的な価値観についての方針。'},
             {'key': 'edu_s2_trust_base', 'name': '信用の教育', 'desc': 'アカウント全体として、発信者やブランドへの信頼をどのように構築・維持していくかの方針。'},
@@ -1107,7 +1090,7 @@ def generate_account_base_policies_draft():
             {'key': 'edu_r5_output_encouragement_base', 'name': 'アウトプットの教育', 'desc': '顧客からの発信（UGC）を促すためのアカウント全体での働きかけや仕組み作りの考え方。'},
             {'key': 'edu_r6_baseline_shift_base', 'name': '基準値/覚悟の教育', 'desc': '顧客の常識や基準値を引き上げ、行動への覚悟を促すためのアカウントとしての一貫した姿勢。'},
         ]
-        # ▲▲▲【ここまでが修正点】▲▲▲
+        
         
         generated_drafts = {}
         user_profile = getattr(g, 'profile', {})
@@ -1120,7 +1103,7 @@ def generate_account_base_policies_draft():
             element_name = element['name']
             element_desc = element['desc']
             
-            # ▼▼▼【ここからが修正点】プロンプトを「本質」を深掘りする指示に変更▼▼▼
+        
             prompt_parts = [
                 "あなたは、ブランドの核心的な哲学を言語化する、一流のブランドストラテジストです。",
                 f"以下の【アカウントの全体戦略】と【思考の指針】を深く理解し、「{element_name}」に関する、アカウントの揺るぎない【基本方針】を150～200字で記述してください。",
@@ -1143,7 +1126,7 @@ def generate_account_base_policies_draft():
                 "  - 具体や抽象どちらかによりすぎないよう意識してください。"
                 "  - 格好いい言葉に頼らず本質的な内容を意識して生成してください"
             ]
-            # ▲▲▲【ここまでが修正点】▲▲▲
+           
             
             prompt = "\n".join(prompt_parts)
 
@@ -1239,7 +1222,7 @@ def create_launch():
             "status": data.get("status", "planning")
         }
         
-        # (以降のロジックはほぼ同じですが、エラーハンドリングを少し改善)
+       
         l_res = supabase.table('launches').insert(new_l_data, returning='representation').execute()
         
         if not l_res.data:
@@ -1257,7 +1240,7 @@ def create_launch():
 
         if hasattr(s_res, 'error') and s_res.error:
              print(f"!!! Launch {created_launch['id']} created, but failed to create strategy: {s_res.error}")
-             # 207 Multi-Status: ローンチは成功したが、一部失敗
+            
              return jsonify({"message":"ローンチは作成されましたが、戦略シートの自動作成に失敗しました。", "launch":created_launch, "strategy_error":str(s_res.error)}), 207
 
         return jsonify(created_launch), 201
@@ -1270,7 +1253,7 @@ def create_launch():
 
 
 
-# app.py の get_launches 関数
+#ローンチ取得
 @app.route('/api/v1/launches', methods=['GET'])
 @token_required
 def get_launches():
@@ -1344,7 +1327,7 @@ def handle_launch_strategy(launch_id):
         print(f"!!! EXCEPTION in handle_launch_strategy: {e}"); traceback.print_exc()
         return jsonify({"error": "An internal server error occurred", "details": str(e)}), 500
 
-# app.py に追記
+
 
 @app.route('/api/v1/launches/<uuid:launch_id>', methods=['DELETE'])
 @token_required
@@ -1366,38 +1349,14 @@ def delete_launch(launch_id):
             print(f"!!! Launch {launch_id} not found or access denied for user {user_id} during delete.")
             return jsonify({"message": "Launch not found or access denied."}), 404
 
-        # 1. 関連する教育戦略を削除 (もし外部キーでCASCADE DELETEが設定されていない場合)
-        #    Supabaseで launches.id と education_strategies.launch_id がリレーションされ、
-        #    ON DELETE CASCADE が設定されていれば、launches の削除時に自動で education_strategies も削除される。
-        #    その場合は以下の education_strategies の削除処理は不要。
-        #    ここでは、念のため手動で削除する例も示す（CASCADEが理想）。
         
-        # strategy_delete_res = supabase.table('education_strategies').delete().eq('launch_id', launch_id).eq('user_id', user_id).execute()
-        # if hasattr(strategy_delete_res, 'error') and strategy_delete_res.error:
-        #     # ローンチ本体を削除する前に戦略削除でエラーが出た場合、どう扱うか検討。
-        #     # ここではエラーを返し、ローンチ本体の削除は行わない。
-        #     print(f"!!! Error deleting education strategy for launch {launch_id}: {strategy_delete_res.error}")
-        #     return jsonify({"message": "Failed to delete associated education strategy.", "error": str(strategy_delete_res.error)}), 500
-        # print(f"--- Associated education strategy for launch {launch_id} deleted (or did not exist).")
-
-        # 2. ローンチ計画本体を削除
-        #    ON DELETE CASCADE が設定されていれば、この操作だけで関連する education_strategies も削除される。
         delete_res = supabase.table('launches').delete().eq('id', launch_id).eq('user_id', user_id).execute()
 
         if hasattr(delete_res, 'error') and delete_res.error:
             print(f"!!! Supabase launch delete error for launch_id {launch_id}: {delete_res.error}")
             return jsonify({"message": "Error deleting launch", "error": str(delete_res.error)}), 500
         
-        # delete().execute() の data は通常、削除されたレコードを含まないか、影響行数を示す。
-        # エラーがないことをもって成功と判断する。
-        # (delete_res.count で影響行数を確認できる場合がある)
-        # if delete_res.data and len(delete_res.data) > 0: # または delete_res.count > 0
-        #     print(f">>> Launch {launch_id} deleted successfully by user {user_id}.")
-        #     return '', 204
-        # else:
-        #     # 実際には削除されたが data が空の場合もあるので、エラーがなければ成功とみなす
-        #     print(f">>> Launch {launch_id} deletion processed for user {user_id}. Assuming success as no error reported.")
-        #     return '', 204
+        
 
         print(f">>> Launch {launch_id} deleted successfully (or was already gone) by user {user_id}.")
         return '', 204 # No Content
@@ -1493,7 +1452,7 @@ def generate_tweet_for_launch(launch_id):
         traceback.print_exc();
         return jsonify({"message":"Error generating tweet for launch","error":str(e)}),500
 
-# app.py 内の chat_education_element 関数を以下の最終版で置き換える
+
 
 @app.route('/api/v1/chat/education-element', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
@@ -1575,7 +1534,7 @@ def chat_education_element():
         ]
         system_instruction_text = "\n".join(system_instruction_parts)
         
-        # 5. 新しいSDKの作法でチャットセッションを開始・継続する
+        # 5. 新しいSDKでチャットセッションを開始・継続する
         user_profile = getattr(g, 'profile', {})
         model_id = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
         
@@ -1601,7 +1560,7 @@ def chat_education_element():
         traceback.print_exc()
         return jsonify({"message":"AIとのチャット処理中にエラーが発生しました", "error":str(e)}), 500
 
-#  generate_strategy_draft
+
 
 @app.route('/api/v1/launches/<uuid:launch_id>/strategy/generate-draft', methods=['POST'])
 @token_required
@@ -1645,13 +1604,13 @@ def generate_strategy_draft(launch_id):
             brand_voice_str = f"トーンは「{brand_voice_detail_data.get('tone', '未設定')}」。重要キーワード: {brand_voice_detail_data.get('keywords', [])}。NGワード: {brand_voice_detail_data.get('ng_words', [])}。"
         else:
             brand_voice_str = user_profile.get('brand_voice', 'プロフェッショナルで、かつ親しみやすいトーン') # フォールバック
-        # --- ▲ user_profile からのアカウント戦略情報取得と整形ここまで ▲ ---
+        
 
         strategy_elements_definition = [
             {'key': 'product_analysis_summary', 'name': '商品分析の要点', 'desc': 'このローンチにおける商品の強み、弱み、ユニークな特徴、競合との比較など'},
             {'key': 'target_customer_summary', 'name': 'ターゲット顧客分析の要点', 'desc': 'このローンチで狙う顧客層、具体的なペルソナ、悩み、欲求、価値観など'},
             {'key': 'edu_s1_purpose', 'name': '目的の教育', 'desc': '顧客が目指すべき理想の未来、このローンチ/商品で何が得られるか'},
-            # ... (他の要素の定義は既存のまま) ...
+            
             {'key': 'edu_r6_baseline_shift', 'name': '基準値の教育／覚悟の教育', 'desc': '顧客の常識や基準値をどう変えるか、行動への覚悟をどう促すか'}
         ]
         generated_drafts = {}
@@ -1694,7 +1653,7 @@ def generate_strategy_draft(launch_id):
 5.  このローンチと商品に特化した、実践的な内容にしてください。一般的な理想論ではなく、具体的なアクションやメッセージの方向性を示してください。
 """
             print(f"\n--- Generating draft for: {element_key} ('{element_name_jp}') ---")
-            # print(f"Prompt for {element_key}:\n{prompt[:300]}...\n...\n{prompt[-300:]}") # デバッグ用にプロンプト一部表示
+            
             try:
                 ai_response = current_text_model.generate_content(prompt)
                 draft_text = ""
@@ -1725,12 +1684,10 @@ def generate_strategy_draft(launch_id):
         traceback.print_exc()
         return jsonify({"message": "Error generating strategy draft", "error": str(e)}), 500
 
-# 他のAI関連API (generate_tweet_for_launch, chat_education_element) も同様に、
-# user_profile (g.profile) から新しいアカウント戦略情報を取得し、
-# プロンプトの内容に反映させる修正を行ってください。
+
 
 # --- ツイート管理API ---
-# in sakuya11k/eds-project/eds-project-feature-account-strategy-page/backend/app.py
+
 
 @app.route('/api/v1/tweets', methods=['POST'])
 @token_required
@@ -1739,25 +1696,25 @@ def save_tweet_draft():
     data = request.json
     if not data: return jsonify({"message": "Invalid request: No JSON data provided."}), 400
     
-    # --- ▼ここからが修正箇所▼ ---
+
     x_account_id = data.get('x_account_id')
     content = data.get('content')
     if not all([x_account_id, content]):
         return jsonify({"message": "x_account_idとcontentは必須です。"}), 400
-    # --- ▲ここまでが修正箇所▲ ---
+
 
     status = data.get('status', 'draft')
     scheduled_at_str = data.get('scheduled_at')
     edu_el_key = data.get('education_element_key')
     launch_id_fk = data.get('launch_id')
     notes_int = data.get('notes_internal')
-    image_urls = data.get('image_urls', []) # 元のロジックを維持
+    image_urls = data.get('image_urls', []) 
 
-    # (日付変換処理なども元のまま)
+  
     scheduled_at_ts = None
     if scheduled_at_str:
         try:
-            # ... (元の日付変換ロジック)
+        
             dt_obj_utc = datetime.datetime.fromisoformat(scheduled_at_str.replace('Z', '+00:00'))
             scheduled_at_ts = dt_obj_utc.isoformat()
         except ValueError:
@@ -1785,9 +1742,6 @@ def save_tweet_draft():
         return jsonify({"message": "ツイートの保存中にエラーが発生しました", "error": str(e)}), 500
 
 # --- ★ ここから予約投稿実行APIを追加 ★ ---
-# sakuya11k/eds-project/eds-project-feature-account-strategy-page/backend/app.py
-
-# app.py 内の execute_scheduled_tweets 関数を、以下のコードで完全に置き換えてください
 
 @app.route('/api/v1/tweets/execute-scheduled', methods=['POST'])
 @app.route('/api/v1/tweets/execute-scheduled/', methods=['POST'])
@@ -1873,7 +1827,7 @@ def execute_scheduled_tweets():
                             # 一時ファイルを削除
                             if tmp_filename and os.path.exists(tmp_filename):
                                 os.remove(tmp_filename)
-                # ▲▲▲【メディアアップロード処理ここまで】▲▲▲
+                
 
                 # ツイート投稿にはv2のAPIクライアントを使用
                 client_v2 = tweepy.Client(
@@ -1918,7 +1872,7 @@ def execute_scheduled_tweets():
 
 
 
-# [GET] ツイート一覧を取得するAPI
+# ツイート一覧を取得
 @app.route('/api/v1/tweets', methods=['GET'])
 @token_required
 def get_tweets():
@@ -1939,17 +1893,16 @@ def get_tweets():
         
         response = query.order('created_at', desc=True).execute()
         
-        # 最新のsupabase-pyでは、エラーは例外としてスローされるため、
-        # .execute()が成功すれば、そのままデータを返すのが最も安全でシンプル。
+
         return jsonify(response.data)
 
     except Exception as e:
         print(f"!!! Tweets fetch exception: {e}"); traceback.print_exc()
-        # APIExceptionなど、Supabase固有のエラーをより詳細に返すことも可能
+    
         error_message = str(e.args[0]) if e.args else str(e)
         return jsonify({"error": "ツイートの取得中にエラーが発生しました", "details": error_message}), 500
 
-# [POST] 新規ツイートを作成するAPI
+#新規ツイート作成
 @app.route('/api/v1/tweets', methods=['POST'])
 @token_required
 def create_tweet():
@@ -1990,7 +1943,7 @@ def create_tweet():
         error_message = str(e.args[0]) if e.args else str(e)
         return jsonify({"error": "Failed to create tweet", "details": error_message}), 500
 
-# [PUT] 既存ツイートを更新するAPI
+# 既存ツイートを更新する
 @app.route('/api/v1/tweets/<uuid:tweet_id>', methods=['PUT'])
 @token_required
 def update_tweet(tweet_id):
@@ -2029,7 +1982,7 @@ def update_tweet(tweet_id):
         error_message = str(e.args[0]) if e.args else str(e)
         return jsonify({"error": "Failed to update tweet", "details": error_message}), 500
 
-# [DELETE] 既存ツイートを削除するAPI
+# 既存ツイートを削除
 @app.route('/api/v1/tweets/<uuid:tweet_id>', methods=['DELETE'])
 @token_required
 def delete_tweet(tweet_id):
@@ -2046,7 +1999,7 @@ def delete_tweet(tweet_id):
         error_message = str(e.args[0]) if e.args else str(e)
         return jsonify({"error": "Failed to delete tweet", "details": error_message}), 500
 
-# [POST] ツイートを即時投稿するAPI
+# ツイートを即時投稿する
 @app.route('/api/v1/tweets/<uuid:tweet_id>/post-now', methods=['POST'])
 @token_required
 def post_tweet_now_api(tweet_id):
@@ -2128,7 +2081,7 @@ PSYCHOLOGY_TECHNIQUES = {
     "edu_r6": "関連する心理技術:\n- **基準値の比較**: 『凡人は〇〇。でも、突き抜ける人は△△』と圧倒的な差を見せつけ、常識を破壊する。\n- **優越感の刺激**: 『我々はここまでやる。だから勝てる』と、高い基準値を持つこと自体に優越感を感じさせる。\n- **権威の背中見せ**: 自身の異常な行動量を語り、『この世界ではこれが普通』と読者の認知をバグらせる。"
 }
 
-#generate_educational_tweet
+
 @app.route('/api/v1/educational-tweets/generate', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
 def generate_educational_tweet():
@@ -2169,7 +2122,7 @@ def generate_educational_tweet():
         # ★★★ ここで「発信者のプロフィール(AI用)」を取得 ★★★
         persona_profile_for_ai = account_strategy.get('persona_profile_for_ai')
 
-        # 3. 確定した「本質」と「構成指示」の定義 (この中身は変更しない)
+        # 3.構成指示
         composition_instructions = {
             "target_customer_summary": ("ターゲット顧客に「これは、まさに私のためのアカウントだ！」と強烈な当事者意識を持たせる。", "指示: ターゲット顧客が心の奥底で抱える「悩み」「欲求」「密かな願望」を、まるで本人の日記を覗き見たかのようにリアルな言葉で代弁してください。読者が思わず「なんで私の心がわかるの！？」と動揺し、強く惹きつけられるようなツイートを作成してください。"),
             "product_analysis_summary": ("提供する価値の全体像を魅力的に伝え、「この人が提供するものなら間違いない」という期待感を醸成する。", "指示: このアカウントが提供する商品やサービス群が、最終的に顧客をどのような「約束の地」へ連れて行くのか、その核心的なベネフィットを一つの物語として語ってください。単なる機能紹介ではなく、顧客の人生がどう変わるのかを鮮やかに描写することが重要です。"),
@@ -2194,7 +2147,7 @@ def generate_educational_tweet():
             
         element_purpose, tweet_composition_instruction = composition_instructions.get(element_key_for_lookup, composition_instructions["default"])
 
-        # (ここは外部定義の`PSYCHOLOGY_TECHNIQUES`を想定)
+        
         related_psychology_technique = PSYCHOLOGY_TECHNIQUES.get(element_key_for_lookup)
         
         # 4. プロンプトを組み立てる
@@ -2209,7 +2162,7 @@ def generate_educational_tweet():
             
         ]
 
-        # ★★★ ここからが修正・追加箇所 ★★★
+        
 
         # 「発信者プロフィール」が設定されている場合のみ、矛盾防止ルールを追加
         if persona_profile_for_ai and persona_profile_for_ai.strip():
@@ -2252,7 +2205,7 @@ def generate_educational_tweet():
         
         prompt = "\n".join(filter(None, prompt_parts))
         
-        # 5. 新しいSDKの作法でAPIを呼び出す
+        # 5. 新しいSDKでAPIを呼び出す
         model_id = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
         config = genai_types.GenerateContentConfig(temperature=0.9)
 
@@ -2365,10 +2318,7 @@ def post_dummy_tweet():
    
   
 
-# ★★★ 「権威性の型」定義を、具体性を強制するテンプレート方式に全面改訂 ★★★
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-# ★ AIの創造性を引き出す最終版プロンプト。このコードブロックで既存の定義を置き換え ★
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
 AUTHORITY_TWEET_FORMATS = {
     "【問題解決型】": {
         "description": "読者の明確な悩みに、具体的な手順を添えて直接的な解決策を提示する。",
@@ -2554,9 +2504,9 @@ def generate_initial_tweet():
                     "\n## 指示",
                     "上記の**【絶対憲法】**と**【参考情報】**を元に、ツイート案を100点満点で採点してください。",
                     "**【一貫性】の評価では、表面的な数字のズレだけでなく、文脈を読んでください。** 例えば、月20万円稼ぐ人が『最初のステップとして月1万円を目指そう』と語るのは、ストーリーとして自然であり、**矛盾ではありません。**",
-                    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                    
                     # ★ QC AIに追加リサーチを命じる権限を与える ★
-                    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                
                     "**【重要】もしツイートの主張を裏付けるための【根拠となるリサーチ情報】が不足している、または質が低いと感じた場合は、フィードバックに『〇〇に関する追加リサーチが必要です』と明確に記述してください。**",
                     "** 見やすい投稿にするために改行の指示もしてください**",
                     
@@ -2652,7 +2602,7 @@ def generate_initial_tweet():
             print(f">>> Executing 1-step generation for '{initial_post_type}'...")
             
             research_summary = ""
-            # ... (この部分は変更なし) ...
+            
             
             prompt = "\n".join(filter(None, prompt_parts))
             generation_config = genai_types.GenerateContentConfig(temperature=0.7)
@@ -2681,9 +2631,9 @@ def generate_initial_tweet():
         print("="*80 + "\n")
         return jsonify({"message": "AIによる初期ツイート生成中に予期せぬエラーが発生しました。", "error": str(e)}), 500
     
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-# ★ 悩み生成関数。 ★
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+# 悩み生成
+
 @app.route('/api/v1/problems/generate', methods=['POST'])
 @token_required
 def generate_problems():
@@ -2849,9 +2799,9 @@ def generate_problems():
         print(f"!!! [AGENT_LOG] CRITICAL EXCEPTION in generate_problems: {e}"); traceback.print_exc()
         return jsonify({"message": "悩みリストの生成中にエラーが発生しました。", "error": str(e)}), 500
 
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-# ★ フロントエンドから悩みリストを受け取って保存する ★
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+# フロントエンドから悩みリストを保存
+
 @app.route('/api/v1/problems/save', methods=['POST'])
 @token_required
 def save_problems():
@@ -2892,9 +2842,9 @@ def save_problems():
         print(f"!!! Exception in save_problems: {e}"); traceback.print_exc()
         return jsonify({"message": "悩みの保存中にエラーが発生しました。", "error": str(e)}), 500
     
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-# ★ 保存済みの悩みリストを取得するAPI。 ★
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
+# 保存済みの悩みリストを取得するAPI。
+
 @app.route('/api/v1/problems', methods=['GET'])
 @token_required
 def get_problems():
@@ -2923,9 +2873,8 @@ def get_problems():
         return jsonify({"message": "悩みリストの取得中にエラーが発生しました。", "error": str(e)}), 500
 
 
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-# ★ 選択した悩みを削除するAPI。これをapp.pyに追加 ★
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+#  選択した悩みを削除
+
 @app.route('/api/v1/problems', methods=['DELETE'])
 @token_required
 def delete_problems():

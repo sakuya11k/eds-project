@@ -12,7 +12,7 @@ type AuthContextType = {
   signOut: () => Promise<void>
 }
 
-// Context の作成 (初期値は undefined)
+// Context の作成 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 // Context を提供する Provider コンポーネント
@@ -62,7 +62,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     signOut,
   }
 
-  // loading 中は何も表示しないか、ローディング画面を表示 (ここでは children を表示)
+  // loading 中は何も表示しないか、ローディング画面を表示 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 

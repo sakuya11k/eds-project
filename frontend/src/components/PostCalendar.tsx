@@ -5,7 +5,7 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import interactionPlugin from '@fullcalendar/interaction' // イベントクリックなどのために必要
 import { EventClickArg } from '@fullcalendar/core'
 
-// フロントエンドのTweet型をインポート (必要に応じてパスを調整)
+// フロントエンドのTweet型をインポート 
 import { type Tweet } from '@/app/tweets/page' // 仮のパス
 
 interface PostCalendarProps {
@@ -24,9 +24,7 @@ const PostCalendar = ({ scheduledTweets, onEventClick }: PostCalendarProps) => {
     extendedProps: { // カスタムデータを格納
       tweetData: tweet,
     },
-    // イベントの色をステータスに応じて変えることも可能
-    // backgroundColor: '#yourColor',
-    // borderColor: '#yourColor',
+    
   }));
 
   // カレンダー上のイベントがクリックされたときの処理

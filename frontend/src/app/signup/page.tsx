@@ -1,9 +1,9 @@
-'use client' // ← クライアントコンポーネントとしてマーク
+'use client' 
 
 import { useState } from 'react'
-import { supabase } from '@/lib/supabaseClient' // ← 作成したクライアントをインポート
-import { useRouter } from 'next/navigation' // App Router 用のルーター
-import { Toaster, toast } from 'react-hot-toast' // 通知用
+import { supabase } from '@/lib/supabaseClient' 
+import { useRouter } from 'next/navigation' 
+import { Toaster, toast } from 'react-hot-toast' 
 
 export default function SignUp() {
   const [email, setEmail] = useState('')
@@ -25,13 +25,11 @@ export default function SignUp() {
     if (error) {
       toast.error(error.message)
     } else if (data.user?.identities?.length === 0) {
-      // Supabase の設定で「Confirm email」がオンの場合でも、
-      // すでに同じメールアドレスが存在すると user は返ってくるが identities が空になる場合がある
+  
       toast.error('このメールアドレスは既に使用されています。')
     } else if (data.user) {
       toast.success('確認メールを送信しました。メールを確認して登録を完了してください。')
-      // 必要に応じてログインページなどにリダイレクト
-      // router.push('/login')
+
     } else {
          toast.error('登録に失敗しました。時間をおいて再試行してください。')
     }

@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabaseClient'
 import { toast } from 'react-hot-toast'
 import Link from 'next/link' // Linkコンポーネントをインポート
 
-// 商品の型定義 (バックエンドと合わせる)
+// 商品の型定義 
 type Product = {
   id: string;
   user_id: string;

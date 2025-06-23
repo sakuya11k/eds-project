@@ -22,9 +22,7 @@ const authorityFormatOptions = [
   { value: "【比較検証型】", label: "比較検証型" },
 ];
 
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-// ★ 悩みリスト選択モーダルコンポーネント ★
-// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
 const ProblemSelectModal = ({ 
   isOpen, 
   onClose, 
@@ -104,8 +102,6 @@ export default function InitialPostGeneratorPage() {
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [isSavingDraft, setIsSavingDraft] = useState<boolean>(false);
   const [apiError, setApiError] = useState<string | null>(null);
-  
-  // ★★★ モーダルの開閉を管理するStateを追加 ★★★
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   // --- API通信 ---
@@ -154,7 +150,6 @@ export default function InitialPostGeneratorPage() {
   };
   
   const handleSaveTweetDraft = async () => {
-    // (変更なし)
     if (!generatedTweet) { toast.error('保存するツイートがありません。'); return; }
     if (!activeXAccount) { toast.error('アカウントを選択してください。'); return; }
     setIsSavingDraft(true);

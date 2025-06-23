@@ -1,4 +1,4 @@
-// src/app/launches/[launchId]/strategy/page.tsx
+
 'use client'
 
 import React, { useEffect, useState, FormEvent, ChangeEvent, useCallback } from 'react';
@@ -9,7 +9,7 @@ import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'react-hot-toast';
 
-// --- 型定義 (元のコードを完全に再現) ---
+// --- 型定義  ---
 export type TargetAudienceItem = {
   id?: string;
   name: string;
@@ -289,7 +289,7 @@ export default function StrategyEditPage() {
     name={fieldKey}
     id={fieldKey}
     rows={7}
-    value={formData[fieldKey] || ''} // ★ || '' を追加して、nullの場合に空文字にする
+    value={formData[fieldKey] || ''} 
     onChange={handleStrategyInputChange}
     placeholder={placeholder}
     className="mt-1 block w-full p-3 border rounded-md"

@@ -72,7 +72,7 @@ export default function EducationalTweetsPage() {
       };
       const response = await apiFetch('/api/v1/educational-tweets/generate', {
         method: 'POST',
-        body: JSON.stringify(payload) // ★ JSON.stringify() を追加
+        body: JSON.stringify(payload) // JSON.stringify() を追加
       });
       if (response?.generated_tweet) {
         setGeneratedTweet(response.generated_tweet);
@@ -92,10 +92,7 @@ export default function EducationalTweetsPage() {
     if (!generatedTweet) { toast.error('保存するツイートがありません。'); return; }
     if (!user || !activeXAccount) { toast.error('アカウントを選択してください。'); return; }
     if (generatedTweet.length > 280) {
-      toast.error(`ツイートが長すぎます（${generatedTweet.length}/280文字）。\nテキストエリアで編集してから保存してください。`);
-      // エラーを分かりやすくするため、テキストエリアを編集可能にするか、
-      // あるいは、ここで自動的に280文字に切り詰めるという選択肢もあります。
-      // 今回はユーザーに編集を促す形にします。
+      toast.error(`ツイートが長すぎます（${generatedTweet.length}/280文字）。\nテキストエリアで編集してから保存してください。`)
       return; // 保存処理を中断
     }
     setIsSavingDraft(true); setError(null);
@@ -108,7 +105,7 @@ export default function EducationalTweetsPage() {
       };
       await apiFetch('/api/v1/tweets', {
         method: 'POST',
-        body: JSON.stringify(payload) // ★ JSON.stringify() を追加
+        body: JSON.stringify(payload) //  JSON.stringify() を追加
       });
       toast.success('ツイートを下書きとして保存しました！');
       setGeneratedTweet(null);
@@ -169,7 +166,7 @@ export default function EducationalTweetsPage() {
             <h3 className="text-xl font-semibold text-gray-800 mb-4">AIが生成したツイート案:</h3>
             <textarea
     value={generatedTweet}
-    onChange={(e) => setGeneratedTweet(e.target.value)} // ★ onChangeを追加
+    onChange={(e) => setGeneratedTweet(e.target.value)} //  onChangeを追加
     rows={7}
     className="w-full p-4 border border-gray-300 rounded-md bg-white focus:ring-2 focus:ring-indigo-500"
 />

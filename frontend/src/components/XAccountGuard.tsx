@@ -1,4 +1,4 @@
-// frontend/src/components/XAccountGuard.tsx
+
 'use client';
 
 import React, { ReactNode } from 'react';

@@ -1,4 +1,4 @@
-// src/app/launches/page.tsx
+
 'use client';
 
 import { useEffect, useState, FormEvent, useCallback, ChangeEvent } from 'react';
@@ -9,11 +9,11 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'react-hot-toast';
 
-// --- 型定義 (大きな変更はなし) ---
+// --- 型定義  ---
 type Product = { id: string; name: string; };
 type Launch = {
   id: string;
-  x_account_id: string; // ★ x_account_idが必須に
+  x_account_id: string; // x_account_idが必須に
   name: string;
   products?: { name: string; } | null; // JOINで取得する商品情報
   product_name?: string; // 整形後の商品名
@@ -31,7 +31,7 @@ const initialLaunchFormData: LaunchFormData = {
   name: '', product_id: '', description: '',
   start_date: '', end_date: '', goal: '', status: 'planning',
 };
-// --- 型定義ここまで ---
+
 
 
 export default function LaunchesPage() {
@@ -47,7 +47,7 @@ export default function LaunchesPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeletingLaunch, setIsDeletingLaunch] = useState<string | null>(null);
 
-  // --- API通信 (fetchベースに統一) ---
+  // --- API通信  ---
   const apiFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     if (!session?.access_token) throw new Error("認証セッションが無効です。");
     const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}`, ...options.headers };
@@ -60,16 +60,16 @@ export default function LaunchesPage() {
     return response.status === 204 ? null : await response.json();
   }, [session]);
 
-  // --- データ取得ロジック (activeXAccountに依存するように変更) ---
+  // --- データ取得ロジック ---
   const fetchData = useCallback(async () => {
-    // ★ activeXAccountがなければ取得処理を行わない
+    //  activeXAccountがなければ取得処理を行わない
     if (!user || !activeXAccount) {
         if (!isXAccountLoading) setIsLoading(false);
         return;
     }
     setIsLoading(true);
     try {
-      // ★ APIにx_account_idをクエリパラメータとして渡す
+      // APIにx_account_idをクエリパラメータとして渡す
       const launchesData = await apiFetch(`/api/v1/launches?x_account_id=${activeXAccount.id}`);
       const populatedLaunches = (launchesData || []).map((launch: Launch) => ({
         ...launch,
@@ -77,7 +77,7 @@ export default function LaunchesPage() {
       }));
       setLaunches(populatedLaunches);
 
-      // 商品一覧はユーザーに紐づくので変更なし
+      
       const productsData = await apiFetch('/api/v1/products');
       setUserProducts(productsData || []);
 
@@ -89,7 +89,7 @@ export default function LaunchesPage() {
   }, [user, activeXAccount, isXAccountLoading, apiFetch]);
 
   useEffect(() => {
-    // ★ activeXAccountが確定してからデータを取得
+    //  activeXAccountが確定してからデータを取得
     if (!isXAccountLoading) {
         fetchData();
     }
@@ -115,7 +115,7 @@ export default function LaunchesPage() {
     try {
       const payload = {
         ...formData,
-        x_account_id: activeXAccount.id, // ★ activeXAccountのIDをpayloadに含める
+        x_account_id: activeXAccount.id, //  activeXAccountのIDをpayloadに含める
         start_date: formData.start_date || null,
         end_date: formData.end_date || null,
       };
@@ -135,7 +135,7 @@ export default function LaunchesPage() {
     }
   };
 
-  // --- 削除処理 (変更なし) ---
+  // --- 削除処理 ---
   const handleDeleteLaunch = async (launchId: string, launchName: string) => {
     if (!window.confirm(`本当にローンチ計画「${launchName}」を削除しますか？`)) return;
     setIsDeletingLaunch(launchId);
@@ -153,7 +153,7 @@ export default function LaunchesPage() {
   if (authLoading) return <div className="text-center py-10">認証情報を確認中...</div>;
 
   return (
-    // ★ ページ全体をXAccountGuardで保護
+    // ページ全体をXAccountGuardで保護
     <XAccountGuard>
       <div className="max-w-5xl mx-auto py-10 px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center mb-8">

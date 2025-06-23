@@ -130,9 +130,7 @@ export default function GenerateProblemsPage() {
     setSavedProblems(updated);
   };
 
-  // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-  // ★ 「すべて選択」のためのロジックを追加 ★
-  // ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+
   const handleSelectAllDrafts = (checked: boolean) => {
     const updated = draftProblems.map(p => ({ ...p, isChecked: checked }));
     setDraftProblems(updated);

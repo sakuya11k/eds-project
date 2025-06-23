@@ -1,4 +1,4 @@
-// src/app/mypage/page.tsx
+
 'use client';
 
 import React, { useEffect, useState, FormEvent, ChangeEvent, useCallback } from 'react';
@@ -8,14 +8,13 @@ import Link from 'next/link';
 import { toast } from 'react-hot-toast';
 
 // --- 型定義 ---
-// このページで扱うフォームデータを定義。APIキー関連は削除。
 export type ProfileFormData = {
   username: string;
   website: string | null;
   preferred_ai_model: string;
 };
 
-// APIレスポンスもこの型を基本とする
+// APIレスポン
 type ProfileApiResponse = ProfileFormData & {
   id?: string;
   updated_at?: string;
@@ -24,8 +23,8 @@ type ProfileApiResponse = ProfileFormData & {
 // フォームの初期状態
 const initialFormData: ProfileFormData = {
   username: '',
-  website: '', // 初期値は空文字でOK
-  preferred_ai_model: 'gemini-2.5-flash-preview-05-20', // 最新モデルをデフォルトに
+  website: '', 
+  preferred_ai_model: 'gemini-2.5-flash-preview-05-20', 
 };
 
 // AIモデルの選択肢
@@ -44,7 +43,6 @@ export default function MyPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // --- apiFetch関数をこのコンポーネント内で定義 ---
-  // XAccountContextから拝借し、このページ専用に調整
   const apiFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     if (!session?.access_token) {
       throw new Error("認証セッションが無効です。再度ログインしてください。");
