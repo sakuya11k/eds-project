@@ -17,7 +17,7 @@ const Header = () => {
         <div className="flex items-center space-x-4">
           {user ? (
             <>
-              {/* アカウント選択状態の表示（クラッシュしない安全な表示） */}
+              {/* アカウント選択状態の表示 */}
               <div className="text-sm">
                 {isLoading ? (
                   <span className="text-gray-400">...</span>
@@ -32,9 +32,15 @@ const Header = () => {
                 )}
               </div>
 
-              {/* ===== ご指摘のあった、元のメニュー構成を復元します ===== */}
+              {/* ===== メニュー構成 ===== */}
               <Link href="/dashboard" className="hover:text-gray-300">アカウント管理</Link>
               <Link href="/tweets" className="hover:text-gray-300">ツイート管理</Link>
+              
+              {/* ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★ */}
+              {/* ★ ここに新しい「悩み生成」ページへのリンクを追加 ★ */}
+              {/* ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★ */}
+              <Link href="/problems/generate" className="text-yellow-300 font-semibold hover:text-yellow-200">悩みリスト生成</Link>
+              
               <Link href="/initial-post-generator" className="hover:text-gray-300">初期投稿生成</Link>
               <Link href="/educational-tweets" className="hover:text-gray-300">教育ツイート</Link>
               <Link href="/launches" className="hover:text-gray-300">ローンチ管理</Link>

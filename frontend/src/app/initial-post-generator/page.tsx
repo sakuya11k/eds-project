@@ -1,232 +1,239 @@
 'use client'
 
-import React, { useEffect, useState, FormEvent, ChangeEvent, useCallback } from 'react'
+import React, { useEffect, useState, FormEvent, useCallback } from 'react'
 import { useAuth } from '@/context/AuthContext'
 import { useXAccount } from '@/context/XAccountContext'
 import XAccountGuard from '@/components/XAccountGuard'
-import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'react-hot-toast'
 
-// --- 型定義 ---
-type InitialPostType = "follow_reason" | "self_introduction" | "value_tips" | "other";
-type InitialPostTypeOption = { value: InitialPostType | ""; label: string; placeholder: string; enableGoogleSearch?: boolean; };
-const initialPostTypeOptions: InitialPostTypeOption[] = [
-  { value: "", label: "初期投稿のタイプを選択してください", placeholder: "まずは投稿タイプを選択してください。", enableGoogleSearch: false },
-  { value: "follow_reason", label: "フォローすべき理由（目的/価値提示）", placeholder: "あなたのアカウントをフォローすることで、読者はどんな未来や価値を得られますか？それを端的に示すキーワードを入力してください。", enableGoogleSearch: true },
-  { value: "self_introduction", label: "自己紹介（信頼/パーソナリティ）", placeholder: "あなたは何者で、なぜこの情報を発信するのですか？実績やストーリーがあれば、その要点を入力してください。", enableGoogleSearch: false },
-  { value: "value_tips", label: "即時的な価値提供（Tips/気づき）", placeholder: "具体的なアドバイスのテーマを入力（任意・空欄の場合はAIが最適なテーマを考えます）", enableGoogleSearch: true },
-  { value: "other", label: "その他・自由テーマ", placeholder: "AIに生成してほしいツイートのテーマや概要、キーワードなどを自由に入力してください。", enableGoogleSearch: true },
-];
+// 型定義
+interface SavedProblem {
+  id: string;
+  problem_text: string;
+  pain_point: string;
+}
 
-// ★★★ 「権威性の型」の選択肢を定義 ★★★
+// 「権威性の型」の選択肢
 const authorityFormatOptions = [
-  { value: "", label: "おまかせ（AIが最適な型を自動選択）" },
   { value: "【問題解決型】", label: "問題解決型" },
   { value: "【ノウハウ公開型】", label: "ノウハウ公開型" },
   { value: "【気づき共有型】", label: "気づき共有型" },
   { value: "【比較検証型】", label: "比較検証型" },
 ];
 
-type GroundingCitation = { uri?: string | null; title?: string | null; publication_date?: string | null; };
-type GroundingInfo = { retrieved_queries?: string[]; citations?: GroundingCitation[]; } | null;
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+// ★ 悩みリスト選択モーダルコンポーネント ★
+// ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+const ProblemSelectModal = ({ 
+  isOpen, 
+  onClose, 
+  onSelect,
+  apiFetch,
+  activeXAccount,
+}: { 
+  isOpen: boolean; 
+  onClose: () => void; 
+  onSelect: (problemText: string) => void;
+  apiFetch: (url: string, options?: RequestInit) => Promise<any>;
+  activeXAccount: { id: string } | null;
+}) => {
+  const [savedProblems, setSavedProblems] = useState<SavedProblem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && activeXAccount) {
+      const fetchProblems = async () => {
+        setIsLoading(true);
+        try {
+          const data = await apiFetch(`/api/v1/problems?x_account_id=${activeXAccount.id}`);
+          setSavedProblems(data);
+        } catch (error) {
+          toast.error("悩みリストの読み込みに失敗しました。");
+        } finally {
+          setIsLoading(false);
+        }
+      };
+      fetchProblems();
+    }
+  }, [isOpen, activeXAccount, apiFetch]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex justify-center items-center">
+      <div className="bg-white rounded-lg shadow-2xl p-6 w-full max-w-2xl max-h-[80vh] flex flex-col">
+        <div className="flex justify-between items-center border-b pb-3 mb-4">
+          <h2 className="text-2xl font-bold">悩みリストからテーマを選択</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-800 text-2xl">×</button>
+        </div>
+        <div className="overflow-y-auto flex-grow">
+          {isLoading ? (
+            <p className="text-center py-8">読み込み中...</p>
+          ) : savedProblems.length > 0 ? (
+            <ul className="space-y-2">
+              {savedProblems.map((problem) => (
+                <li 
+                  key={problem.id} 
+                  onClick={() => onSelect(problem.problem_text)}
+                  className="p-3 rounded-md hover:bg-blue-100 cursor-pointer border"
+                >
+                  <span className="font-mono text-xs bg-gray-200 text-gray-600 rounded px-1 py-0.5 mr-2">{problem.pain_point}</span>
+                  {problem.problem_text}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-center py-8 text-gray-500">保存されている悩みがありません。<br /><Link href="/problems/generate" className="text-indigo-600 hover:underline">悩みリスト生成ページ</Link>で作成してください。</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 
 export default function InitialPostGeneratorPage() {
-  const { user, session, loading: authLoading } = useAuth();
-  const { activeXAccount, isLoading: isXAccountLoading } = useXAccount();
-  const router = useRouter();
+  const { session } = useAuth();
+  const { activeXAccount } = useXAccount();
 
-  const [selectedPostType, setSelectedPostType] = useState<InitialPostType | "">("");
-  const [theme, setTheme] = useState<string>('');
-  const [useGoogleSearch, setUseGoogleSearch] = useState<boolean>(false);
-  const [generatedTweet, setGeneratedTweet] = useState<string | null>(null);
-  const [groundingInfo, setGroundingInfo] = useState<GroundingInfo>(null);
+  // --- State定義 ---
+  const [problemToSolve, setProblemToSolve] = useState<string>('');
+  const [selectedAuthorityFormat, setSelectedAuthorityFormat] = useState<string>("【問題解決型】");
+  const [generatedTweet, setGeneratedTweet] = useState<string>("");
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [isSavingDraft, setIsSavingDraft] = useState<boolean>(false);
   const [apiError, setApiError] = useState<string | null>(null);
-
-  // ★★★ 選択された「権威性の型」を保持するStateを追加 ★★★
-  const [selectedAuthorityFormat, setSelectedAuthorityFormat] = useState<string>("");
-
-  useEffect(() => {
-    if (!authLoading && !user) router.push('/login');
-  }, [user, authLoading, router]);
   
+  // ★★★ モーダルの開閉を管理するStateを追加 ★★★
+  const [isModalOpen, setIsModalOpen] = useState(false);
+
+  // --- API通信 ---
   const apiFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     if (!session?.access_token) throw new Error("認証セッションが無効です。");
     const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${session.access_token}`, ...options.headers };
     const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}${url}`, { ...options, headers });
     if (!response.ok) {
-        let errorBody;
-        try { errorBody = await response.json(); } catch (e) { throw new Error(`サーバーエラー (Status: ${response.status})`); }
+        const errorBody = await response.json().catch(() => ({ message: `サーバーエラー (Status: ${response.status})` }));
         throw new Error(errorBody?.message || errorBody?.error || `APIエラー (Status: ${response.status})`);
     }
     return response.status === 204 ? null : await response.json();
   }, [session]);
 
-  const handlePostTypeChange = (e: ChangeEvent<HTMLSelectElement>) => {
-    const newType = e.target.value as InitialPostType | "";
-    setSelectedPostType(newType);
-    const selectedOption = initialPostTypeOptions.find(opt => opt.value === newType);
-    if (selectedOption && !selectedOption.enableGoogleSearch) { setUseGoogleSearch(false); }
-    // 投稿タイプが変わったら、型の選択もリセットする
-    if (newType !== 'value_tips') {
-        setSelectedAuthorityFormat("");
-    }
-    setGeneratedTweet(null); setGroundingInfo(null);
-  };
-
+  // --- イベントハンドラ ---
   const handleGenerateTweet = async (e: FormEvent) => {
     e.preventDefault();
-    if (!user || !activeXAccount) { toast.error('アカウントを選択してください。'); return; }
-    if (!selectedPostType) { toast.error('初期投稿のタイプを選択してください。'); return; }
-    
-    if (selectedPostType !== 'value_tips' && !theme.trim()) { 
-      toast.error('ツイートのテーマを入力してください。'); 
-      return; 
+    if (!activeXAccount || !problemToSolve.trim()) {
+      toast.error('アカウントと「解決したい悩み」は必須です。');
+      return;
     }
-
-    setIsGenerating(true); setGeneratedTweet(null); setGroundingInfo(null); setApiError(null);
+    setIsGenerating(true);
+    setApiError(null);
+    setGeneratedTweet("");
     try {
       const payload = {
         x_account_id: activeXAccount.id,
-        initial_post_type: selectedPostType,
-        theme: theme,
-        use_Google_Search: useGoogleSearch,
-        // ★★★ 選択された型をペイロードに追加 ★★★
-        selected_authority_format: selectedAuthorityFormat,
+        initial_post_type: "value_tips",
+        theme: problemToSolve,
+        selected_authority_format_by_user: selectedAuthorityFormat,
       };
       const response = await apiFetch('/api/v1/initial-tweets/generate', { method: 'POST', body: JSON.stringify(payload) });
       if (response?.generated_tweet) {
         setGeneratedTweet(response.generated_tweet);
-        if (response?.grounding_info) { setGroundingInfo(response.grounding_info); }
-        toast.success('AIによるツイート案が生成されました！');
+        toast.success('AIによるツイートが生成されました！');
       } else {
-        throw new Error(response?.message || 'AIからの応答が不正です。');
+        throw new Error('AIからの応答が不正です。');
       }
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : '初期投稿ツイートの生成に失敗しました。';
-      setApiError(errorMessage); toast.error(errorMessage);
+      const errorMessage = err instanceof Error ? err.message : 'ツイートの生成に失敗しました。';
+      setApiError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setIsGenerating(false);
     }
   };
-
+  
   const handleSaveTweetDraft = async () => {
+    // (変更なし)
     if (!generatedTweet) { toast.error('保存するツイートがありません。'); return; }
-    if (!user || !activeXAccount) { toast.error('アカウントを選択してください。'); return; }
-
-    setIsSavingDraft(true); setApiError(null);
+    if (!activeXAccount) { toast.error('アカウントを選択してください。'); return; }
+    setIsSavingDraft(true);
+    setApiError(null);
     try {
-      const payload = {
-        x_account_id: activeXAccount.id,
-        content: generatedTweet,
-        status: 'draft',
-      };
+      const payload = { x_account_id: activeXAccount.id, content: generatedTweet, status: 'draft' };
       await apiFetch('/api/v1/tweets', { method: 'POST', body: JSON.stringify(payload) });
       toast.success('ツイートを下書きとして保存しました！');
-      setGeneratedTweet(null); setGroundingInfo(null);
+      setGeneratedTweet("");
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : '下書きの保存に失敗しました。';
-      setApiError(errorMessage); toast.error(errorMessage);
+      setApiError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       setIsSavingDraft(false);
     }
   };
-  
-  const currentPlaceholder = initialPostTypeOptions.find(opt => opt.value === selectedPostType)?.placeholder || "まずは投稿タイプを選択してください。";
-  const showGoogleSearchOption = initialPostTypeOptions.find(opt => opt.value === selectedPostType)?.enableGoogleSearch || false;
-
-  if (authLoading || isXAccountLoading) {
-    return <div className="text-center py-20">読み込み中...</div>;
-  }
 
   return (
     <XAccountGuard>
-      <div className="max-w-3xl mx-auto py-10 px-4 sm:px-6 lg:px-8">
+      {/* ★★★ モーダルコンポーネントを配置 ★★★ */}
+      <ProblemSelectModal 
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onSelect={(problemText) => {
+          setProblemToSolve(problemText);
+          setIsModalOpen(false);
+        }}
+        apiFetch={apiFetch}
+        activeXAccount={activeXAccount}
+      />
+
+      <div className="max-w-4xl mx-auto py-12 px-4">
         <div className="mb-8 flex justify-between items-center">
             <div>
-                <h1 className="text-3xl sm:text-4xl font-extrabold text-gray-900 tracking-tight">初期投稿 AIジェネレーター</h1>
-                {activeXAccount && <p className="text-indigo-600 font-semibold">対象アカウント: @{activeXAccount.x_username}</p>}
+                <h1 className="text-3xl font-extrabold text-gray-900">価値提供ツイート生成 (AIアシスタント)</h1>
+                {activeXAccount && <p className="text-indigo-600 font-semibold">対象: @{activeXAccount.x_username}</p>}
             </div>
-            <Link href="/dashboard" className="text-sm text-indigo-600 hover:text-indigo-800 font-medium">ダッシュボードへ戻る</Link>
+            <Link href="/dashboard" className="text-sm text-indigo-600 hover:underline">← ダッシュボード</Link>
         </div>
 
-        <form onSubmit={handleGenerateTweet} className="space-y-8 bg-white p-8 sm:p-10 shadow-2xl rounded-2xl border border-gray-200 mb-12">
+        <form onSubmit={handleGenerateTweet} className="space-y-6 bg-white p-8 shadow-xl rounded-2xl border">
           <div>
-            <label htmlFor="initialPostType" className="block text-sm font-semibold text-gray-700 mb-2">1. 生成したい初期投稿のタイプを選択</label>
-            <select id="initialPostType" value={selectedPostType} onChange={handlePostTypeChange} required className="mt-1 block w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500">
-              {initialPostTypeOptions.map((option) => (<option key={option.value} value={option.value} disabled={option.value === ""}>{option.label}</option>))}
+            {/* ★★★ ラベルとボタンを横並びに ★★★ */}
+            <div className="flex justify-between items-center mb-2">
+              <label htmlFor="problemToSolve" className="block text-sm font-semibold text-gray-800">1. 解決したい「悩み」や「テーマ」を入力</label>
+              <button 
+                type="button" 
+                onClick={() => setIsModalOpen(true)}
+                className="text-sm bg-blue-100 text-blue-800 font-semibold px-3 py-1 rounded-md hover:bg-blue-200"
+              >
+                悩みリストから選ぶ
+              </button>
+            </div>
+            <textarea id="problemToSolve" rows={3} value={problemToSolve} onChange={(e) => setProblemToSolve(e.target.value)} placeholder="例：『PCの使い方がわからない』『効果的なSNS運用のコツ』" required className="w-full p-3 border rounded-md"/>
+          </div>
+          <div>
+            <label htmlFor="authorityFormat" className="block text-sm font-semibold text-gray-800 mb-2">2. 「権威性の型」を選択</label>
+            <select id="authorityFormat" value={selectedAuthorityFormat} onChange={(e) => setSelectedAuthorityFormat(e.target.value)} className="w-full p-3 border rounded-md bg-white">
+              {authorityFormatOptions.map((opt) => (<option key={opt.value} value={opt.value}>{opt.label}</option>))}
             </select>
           </div>
-
-          {/* ★★★ ここからが追加UI ★★★ */}
-          {selectedPostType === 'value_tips' && (
-            <div>
-              <label htmlFor="authorityFormat" className="block text-sm font-semibold text-gray-700 mb-2">
-                2. 権威性の型を選択 (任意)
-              </label>
-              <select 
-                id="authorityFormat" 
-                value={selectedAuthorityFormat} 
-                onChange={(e) => setSelectedAuthorityFormat(e.target.value)}
-                className="mt-1 block w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500"
-              >
-                {authorityFormatOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          {/* ★★★ 追加UIここまで ★★★ */}
-
           <div>
-            <label htmlFor="theme" className="block text-sm font-semibold text-gray-700 mb-2">
-              {selectedPostType === 'value_tips' ? '3.' : '2.'} ツイートのテーマやキーワードを入力
-            </label>
-            <textarea 
-              id="theme" 
-              rows={5} 
-              value={theme} 
-              onChange={(e) => setTheme(e.target.value)} 
-              placeholder={currentPlaceholder} 
-              className="mt-1 block w-full px-4 py-3 border border-gray-300 rounded-lg shadow-sm focus:ring-2 focus:ring-indigo-500" 
-              disabled={!selectedPostType}
-            />
-          </div>
-          {showGoogleSearchOption && selectedPostType && (
-            <div className="flex items-center">
-              <input id="useGoogleSearch" type="checkbox" checked={useGoogleSearch} onChange={(e) => setUseGoogleSearch(e.target.checked)} className="h-4 w-4 text-indigo-600 rounded focus:ring-indigo-500"/>
-              <label htmlFor="useGoogleSearch" className="ml-2 block text-sm text-gray-900">最新の情報をGoogle検索して参考にする</label>
-            </div>
-          )}
-          <div className="pt-2">
-            <button type="submit" disabled={isGenerating || isSavingDraft || !selectedPostType} className="w-full flex justify-center items-center py-3 px-6 border rounded-lg shadow-md text-lg font-medium text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60">
-              {isGenerating ? 'AIがツイート生成中...' : 'AIでツイート案を生成する'}
+            <button type="submit" disabled={isGenerating} className="w-full py-3 px-6 bg-indigo-600 text-white font-bold rounded-lg shadow-lg hover:bg-indigo-700 disabled:opacity-50">
+              {isGenerating ? 'AIが思考・リサーチ・改善を繰り返しています...' : 'ツイートを生成する'}
             </button>
           </div>
         </form>
 
-        {apiError && <div className="mb-6 bg-red-50 p-4 rounded-lg border text-red-700">エラー: {apiError}</div>}
-        {generatedTweet && !isGenerating && (
-          <div className="mt-10 p-6 border rounded-lg bg-gray-50 shadow-lg">
-            <h3 className="text-xl font-semibold text-gray-800 mb-4">AIが生成したツイート案:</h3>
-            <textarea readOnly value={generatedTweet} rows={7} className="w-full p-4 border rounded-md bg-white focus:ring-2 focus:ring-indigo-500" onClick={(e) => (e.target as HTMLTextAreaElement).select()}/>
-            {groundingInfo && (
-              <div className="mt-4 p-3 border-t">
-                <h4 className="text-sm font-semibold text-gray-700 mb-2">AIが参照した可能性のある情報源:</h4>
-                {groundingInfo.citations && groundingInfo.citations.length > 0 && (
-                  <ul className="list-disc list-inside pl-2 space-y-1">
-                    {groundingInfo.citations.map((cite, idx) => (<li key={`cite-${idx}`} className="text-xs text-gray-500">{cite.title && <span className="font-medium">{cite.title}</span>}{cite.uri && <a href={cite.uri} target="_blank" rel="noopener noreferrer" className="text-indigo-500 hover:underline ml-1">[リンク]</a>}</li>))}
-                  </ul>
-                )}
-              </div>
-            )}
-            <div className="mt-6 flex justify-end space-x-3">
-              <button onClick={() => { setGeneratedTweet(null); setGroundingInfo(null); }} className="px-6 py-2 bg-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-300 text-sm">クリア</button>
-              <button onClick={handleSaveTweetDraft} disabled={isSavingDraft || isGenerating} className="px-6 py-2 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 disabled:opacity-50 text-sm">
+        {apiError && <div className="mt-6 bg-red-50 p-4 rounded-lg border text-red-700">エラー: {apiError}</div>}
+
+        {generatedTweet && (
+          <div className="mt-12 space-y-8">
+            <section>
+              <h2 className="text-2xl font-bold text-gray-800 mb-4">生成されたツイート案</h2>
+              <textarea value={generatedTweet} onChange={e => setGeneratedTweet(e.target.value)} rows={10} className="w-full p-4 border rounded-md bg-gray-50"/>
+            </section>
+            <div className="pt-6 flex justify-end">
+              <button onClick={handleSaveTweetDraft} disabled={isSavingDraft} className="px-8 py-3 bg-green-600 text-white font-semibold rounded-lg shadow-md hover:bg-green-700 disabled:opacity-50">
                 {isSavingDraft ? '保存中...' : '下書きとして保存'}
               </button>
             </div>

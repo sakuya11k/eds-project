@@ -2129,7 +2129,6 @@ PSYCHOLOGY_TECHNIQUES = {
 }
 
 #generate_educational_tweet
-
 @app.route('/api/v1/educational-tweets/generate', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
 def generate_educational_tweet():
@@ -2366,103 +2365,48 @@ def post_dummy_tweet():
    
   
 
-# ★★★ 「権威性の型」定義（変更なし） ★★★
+# ★★★ 「権威性の型」定義を、具体性を強制するテンプレート方式に全面改訂 ★★★
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+# ★ AIの創造性を引き出す最終版プロンプト。このコードブロックで既存の定義を置き換え ★
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 AUTHORITY_TWEET_FORMATS = {
     "【問題解決型】": {
-        "description": "読者の明確な悩みに、科学的根拠を添えて直接的な解決策を提示する。",
-        "prompt": """
-構造:
-- 権威ある問題提起 - 研究データで問題の深刻さを証明
-- 権威による共感 - 専門家も同じ問題を指摘
-- 解決策の権威付け - 「○○大学が開発した手法」
-- 科学的手順 - 各ステップに研究根拠を付与
-- 権威ある注意点 - 専門機関の推奨事項
-- 統計的効果 - 研究結果での改善率を提示
-
-例テンプレート:
-現代人の96%が集中力低下に悩んでいることをご存知ですか？
-（厚生労働省 2024年調査）
-実際、ハーバード大学のマシュー・キリングワース博士も「人間の心は47%の時間、今やっていることに集中していない」と警告しています。
-でも安心してください。MIT認知科学研究所が開発した「注意力回復プログラム」で、この問題は確実に解決できます。
-【科学的に証明された3ステップ】
-①5分間マインドフルネス →UCLA研究：脳の注意制御機能が28%向上
-②25分集中+5分休憩（ポモドーロ法） →イタリア国立研究所発案、NASA・IBMが正式採用
-③デジタルデトックス環境 →シカゴ大学研究：スマホが視界にあるだけで認知能力20%低下
-【重要】米国睡眠財団の推奨：90分以上の連続作業は避けること。
-結果：この手法を実践した被験者1,247名のうち、89%が「集中力の大幅改善」を報告（スタンフォード大学6ヶ月追跡調査）
-世界トップ企業が採用する手法、今日から始めてみませんか？
-"""
+        "description": "読者の明確な悩みに、具体的な手順を添えて直接的な解決策を提示する。",
+        "required_elements": [
+            "問題提起: ユーザーの悩みの深刻さや重要性が伝わる、具体的な事実やデータ。",
+            "解決策: 悩みを解決できるという希望と、その方法の簡単な紹介。",
+            "具体的な手順: 読者がすぐに行動できる、シンプルなステップ。",
+            "未来の提示: その行動によって得られるポジティブな変化。"
+        ]
     },
     "【ノウハウ公開型】": {
-        "description": "専門的で体系化された知識や手法を、権威を借りて公開する。",
-        "prompt": """
-構造:
-- 権威的価値宣言 - 「○○大学で教えている手法を公開」
-- 権威の背景 - 研究機関・専門家・大企業の実績
-- 核心部分 - 科学的根拠付きの最重要ポイント
-- 詳細解説 - データ・統計を交えた手順
-- 成功事例 - 有名企業・研究結果での効果
-- まとめ - 権威ある機関の推奨として再強調
-
-例テンプレート:
-スタンフォード大学で教えられている副業構築法を全て公開します。
-この手法はGoogleやAppleの元社員が実践し、平均月収12.7万円を達成しています。
-最重要原則：「検証可能な小さな実験から始める」（シリコンバレー流MVP思考）
-科学的手順：
-1. スキル棚卸し（マッキンゼー式分析法）
-2. 市場検証（リーン・スタートアップ理論）
-3. MVP作成（最小限実行可能プロダクト）
-4. データ収集（A/Bテスト手法）
-5. スケール（パレートの法則活用）
-実際、この手法を使った500人の追跡調査では、6ヶ月で副業収入を得た人が87%でした。
-スタンフォード発の手法、試してみませんか？
-"""
+        "description": "専門的で体系化された知識や手法を、具体的な手順として公開する。",
+        "required_elements": [
+            "価値宣言: これから何を公開するのか、その価値が伝わる魅力的な一文。",
+            "ノウハウの核心: 具体的で実践的な知識や手順を数点。",
+            "最重要ポイント: 数あるノウハウの中で、特に意識すべきこと。",
+            "行動喚起: 読者が「やってみよう」と思えるような、軽やかな締めの一文。"
+        ]
     },
     "【気づき共有型】": {
         "description": "権威ある研究結果と個人の体験を結びつけ、読者の常識を覆す「気づき」を与える。",
-        "prompt": """
-構造:
-- 権威ある発見 - 「○○大学の研究で判明した事実」
-- 個人体験との一致 - 研究結果と自分の経験がリンク
-- 従来の常識への疑問 - 権威あるデータで常識を覆す
-- 新しい真実 - 研究結果に基づく新視点
-- 実践結果 - 個人実験 + 統計データ
-- 行動提案 - 科学的根拠を示しての推奨
-
-例テンプレート:
-スタンフォード大学の20年間追跡調査で衝撃の事実が判明：「完璧主義者の方が実は成果が低い」
-この研究結果を見た時、自分の経験と完全に一致しました。
-従来の常識：完璧を目指せば高品質になる
-研究が示す真実：完璧主義は行動を阻害し、結果的に低成果
-ハーバード・ビジネス・レビューによると、60%完成度で開始する人の方が最終成果が高いそうです。
-実際、私も60%ルールを導入してから：・企画通過率：30% → 90% ・プロジェクト完成率：50% → 85%
-MIT教授も推奨する「勇気ある未完成」、始めてみませんか？
-"""
+        "required_elements": [
+            "衝撃の事実: 読者の常識を揺さぶるような、意外な研究結果やデータ。",
+            "従来の常識との対比: これまで信じられていたことと、新しい事実の違いを明確にする。",
+            "新しい視点の提供: その事実から導き出される、新しい考え方や教訓。",
+            "行動への誘い: 新しい視点に基づいた、今日からできる小さなアクション。"
+        ]
     },
     "【比較検証型】": {
         "description": "対立する二つの説を権威あるデータで比較し、読者に判断基準を提供する。",
-        "prompt": """
-構造:
-- 権威ある論争 - 「○○大学 vs △△大学の研究対立」
-- 検証の意義 - なぜこの比較が重要か（データ付き）
-- A案の権威付け - 支持する研究・専門家・企業
-- B案の権威付け - 支持する研究・専門家・企業
-- メタ分析結果 - 複数研究をまとめた結論
-- 実践推奨 - どの権威に従うべきかの判断基準
-
-例テンプレート:
-ハーバード大学「朝活推奨」vs スタンフォード大学「夜活推奨」
-この論争に決着をつけるため、両方を3ヶ月実践検証しました。
-【朝活派】ハーバード大学研究 ・コルチゾール値が最適（朝6-8時） ・意思決定力が日中の1.5倍 ・Forbes500社CEO の68%が実践
-【夜活派】スタンフォード大学研究   ・クリエイティビティは夜間に20%向上 ・記憶定着率が睡眠前学習で40%UP ・Google、Facebook幹部の74%が実践
-結論：オックスフォード大学のメタ分析（15,000人対象）では「個人のクロノタイプ（生体リズム）による」
-判定法：起床後4時間以内に最も集中できる→朝型。起床後8時間以降に最も集中できる→夜型
-あなたはどちらのタイプでしたか？
-"""
+        "required_elements": [
+            "論争の提示: 「A vs B」という対立構造を読者に分かりやすく提示する。",
+            "両案のメリット: それぞれの選択肢の魅力的な点を、具体的なデータや事例を交えて紹介する。",
+            "明確な結論・判断基準: 読者が「自分はどっちを選ぶべきか」を自己診断できる、シンプルな基準を提供する。"
+        ]
     }
 }
 
-# --- Block 5: 新しいAPIエンドポイント - 初期投稿生成 (Google検索対応) ---
 @app.route('/api/v1/initial-tweets/generate', methods=['POST', 'OPTIONS'], strict_slashes=False)
 @token_required
 def generate_initial_tweet():
@@ -2470,16 +2414,22 @@ def generate_initial_tweet():
     if not client:
         return jsonify({"message": "Gen AI Client is not initialized. Check API Key."}), 500
 
+    print("\n" + "="*80)
+    print("--- [AGENT_LOG] START: generate_initial_tweet process ---")
+    print("="*80)
+    
     user_id = g.user.id
     try:
         data = request.json
+        print(f"--- [AGENT_LOG] 1. Received request data:\n{json.dumps(data, indent=2, ensure_ascii=False)}")
         if not data: return jsonify({"error": "Invalid JSON request"}), 400
         x_account_id = data.get('x_account_id')
         initial_post_type = data.get('initial_post_type')
         theme = data.get('theme', '')
-        use_Google_Search_flag = data.get('use_Google_Search', False)
-        selected_authority_format_by_user = data.get('selected_authority_format', None)
-        if not all([x_account_id, initial_post_type]): return jsonify({"error": "x_account_idとinitial_post_typeは必須です"}), 400
+        use_Google_Search_flag = True # デフォルトで検索をONにする
+        selected_format = data.get('selected_authority_format_by_user', "【問題解決型】")
+        if not all([x_account_id, initial_post_type, theme, selected_format]): 
+            return jsonify({"error": "x_account_id, initial_post_type, theme, selected_authority_formatは必須です"}), 400
     except Exception as e_parse:
         return jsonify({"error": "Failed to parse request", "details": str(e_parse)}), 400
 
@@ -2488,137 +2438,138 @@ def generate_initial_tweet():
         account_strategy_res = supabase.table('account_strategies').select('*').eq('x_account_id', x_account_id).eq('user_id', user_id).maybe_single().execute()
         account_strategy = account_strategy_res.data if account_strategy_res.data else {}
         user_profile = getattr(g, 'profile', {})
-        account_purpose = account_strategy.get('account_purpose', '（設定なし）')
-        core_value_proposition = account_strategy.get('core_value_proposition', '（設定なし）')
         persona_profile_for_ai = account_strategy.get('persona_profile_for_ai')
-        target_persona_summary = "一般的なフォロワー"
-        main_target_audience_data = account_strategy.get('main_target_audience')
-        if main_target_audience_data and isinstance(main_target_audience_data, list) and main_target_audience_data:
-            first_persona = main_target_audience_data[0]
-            if isinstance(first_persona, dict):
-                name, age, problem = first_persona.get('name', ''), first_persona.get('age', ''), first_persona.get('悩み', '')
-                target_persona_summary = f"ペルソナ「{name}」({age})の悩みは「{problem}」"
         model_id = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
         grounding_info_to_return = None
         final_tweet = ""
         
-        # ======================================================================
-        # 分岐処理の開始
-        # ======================================================================
         if initial_post_type == "value_tips":
-            print(">>> Executing 8-Step Self-Improving QC loop for 'value_tips'...")
+            print("\n--- [AGENT_LOG] Executing Self-Improving QC loop for 'value_tips'...")
             
-            # === フェーズ1: 悩み特定＆「権威性の型」決定 ===
-            print(">>> Phase 1: Identifying problem and selecting format...")
-            selected_problem = ""
-            selected_format = ""
-            if selected_authority_format_by_user and selected_authority_format_by_user in AUTHORITY_TWEET_FORMATS:
-                print(f">>> User has selected the format: {selected_authority_format_by_user}")
-                selected_format = selected_authority_format_by_user
-                phase1_prompt = "\n".join([
-                    "あなたは、クライアントの課題を多角的に分析し、最も解決すべき一点を見つけ出すのが得意な、プロの課題発見コンサルタントです。",
-                    f"## 最終目的: ターゲット顧客の悩みを『{selected_format}』という型で解決するツイートを作成します。そのための最も効果的で「具体的」なテーマ（悩み）を特定してください。",
-                    f"\n## アカウント情報\n- ターゲット顧客: {target_persona_summary}", f"- ユーザーからのヒント: {theme if theme else '（特になし）'}",
-                    "\n## 指示", "ターゲット顧客が抱えるであろう「具体的な悩み」を一つだけ特定し、そのテキストのみを出力してください。説明は不要です。"
+            selected_problem = theme
+            print(f"--- [AGENT_LOG]   - User Input -> Problem: '{selected_problem}', Format: '{selected_format}'")
+            
+            research_summary = ""
+            if use_Google_Search_flag:
+                print(f"--- [AGENT_LOG]   - Google Search is ENABLED by default.")
+                # === フェーズ2: 情報収集キーワードの生成 ===
+                print("\n--- [AGENT_LOG] Phase 2: Generating search keywords...")
+                phase2_prompt = "\n".join([
+                    "あなたは、与えられた戦略に基づいて、最適な調査計画を立てるAIリサーチャーです。",
+                    f"## 最終目的: 「{selected_problem}」という悩みを、「{selected_format}」という型で解決するツイートを作成するための、精度の高い情報を収集すること。",
+                    "\n## 指示", "上記の目的を達成するために、Googleで調査すべき「検索キーワード」を、カンマ区切りで3～5個出力してください。",
+                    f"## 型に応じたキーワード生成のヒント:", f" - 今回の型は「{selected_format}」です。この型を構成するために必要な情報を逆算してキーワードを設計してください。",
+                    "キーワードのみを出力してください。"
                 ])
-                phase1_response = client.models.generate_content(model=model_id, contents=phase1_prompt)
-                selected_problem = phase1_response.text.strip()
+                phase2_response = client.models.generate_content(model=model_id, contents=phase2_prompt)
+                search_keywords = phase2_response.text.strip()
+                if not search_keywords: raise Exception("Phase 2: AI failed to generate search keywords.")
+                print(f"--- [AGENT_LOG]   - Keywords: {search_keywords}")
+
+                # === フェーズ3: 情報収集・整理 ===
+                print("\n--- [AGENT_LOG] Phase 3: Researching the solution...")
+                phase3_prompt = "\n".join([
+                    "あなたは、プロのAIリサーチャーです。",
+                    f"## 最終目的: 「{selected_problem}」という悩みを、「{selected_format}」という型で解決するツイートを作成するための根拠となる、信頼性が高く効果的な情報を収集・要約してください。",
+                    "\n## 指示", f"以下の【検索キーワード群】を使ってWeb調査を行い、【ユーザーの悩み】を解決するための、具体的で信頼性の高い情報を3～5個の箇条書きでリストアップしてください。",
+                    f"  - ユーザーの悩み: {selected_problem}", f"  - 調査に使う検索キーワード群: {search_keywords}",
+                    "- 複数のキーワードから得られた情報を統合し、最も本質的で効果的な解決策を要約してください。", "- あなた自身の意見やツイート本文の提案は含めず、事実のリストアップに徹してください。"
+                ])
+                research_config = genai_types.GenerateContentConfig(tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())])
+                phase3_response = client.models.generate_content(model=model_id, contents=phase3_prompt, config=research_config)
+                research_summary = phase3_response.text.strip()
+                if phase3_response.candidates and hasattr(phase3_response.candidates[0], 'grounding_metadata'):
+                    g_meta = phase3_response.candidates[0].grounding_metadata
+                    if hasattr(g_meta, 'citations') and g_meta.citations:
+                        grounding_info_to_return = [{"uri": getattr(c, 'uri', None), "title": getattr(c, 'title', None)} for c in g_meta.citations]
+                if not research_summary: raise Exception("Phase 3: AI failed to research the solution.")
+                print(f"--- [AGENT_LOG]   - Research summary created.")
             else:
-                print(">>> User has not selected a format. AI will select both problem and format.")
-                format_list_for_prompt = "\n".join([f"- {name}: {details['description']}" for name, details in AUTHORITY_TWEET_FORMATS.items()])
-                phase1_prompt = "\n".join([
-                    "あなたは、クライアントの課題を多角的に分析し、それに最適なコンテンツ戦略を立案するプロのコンサルタントです。",
-                    "\n## 最重要ミッション", "**毎回、前回とは異なる視点から、新鮮で多様な「具体的な悩み」と、それを解決するための「最適な型」を提案すること。**",
-                    "\n## 選択可能な「権威性の型」リスト", format_list_for_prompt,
-                    "\n## 指示", "以下の2ステップの思考プロセスを経て、最終的な出力をJSON形式で生成してください。", "---",
-                    "### ステップ1: 悩みの多角的ブレインストーミングと「型」のマッチング（あなたの頭の中だけで実行）", f"ターゲット顧客（{target_persona_summary}）が抱えそうな悩みを多角的に洗い出し、それぞれの悩みを解決するのに最も効果的な「権威性の型」は何かを検討してください。", "---",
-                    "### ステップ2: 最も効果的な「悩み」と「型」の選定と出力", "ステップ1で検討した組み合わせの中から、最もツイートとして魅力的で、前回とは違う切り口になるものを一つだけ選び、以下のJSON形式で出力してください。",
-                    '```json', '{', '  "selected_problem": "（ここに選んだ具体的な悩みを記述）",', '  "selected_format": "（ここに上記リストから選んだ型名を記述。例: 【問題解決型】）"', '}', '```', "JSON以外の説明文は絶対に含めないでください。"
-                ])
-                phase1_response = client.models.generate_content(model=model_id, contents=phase1_prompt)
-                try:
-                    cleaned_text = phase1_response.text.strip().replace("```json", "").replace("```", "")
-                    decision = json.loads(cleaned_text)
-                    selected_problem = decision['selected_problem']
-                    selected_format = decision['selected_format']
-                except (json.JSONDecodeError, KeyError) as e:
-                    print(f"!!! Phase 1 failed to parse AI response: {e}"); raise Exception("Phase 1: AIの応答形式が不正です。")
-            if not selected_problem or not selected_format: raise Exception("Phase 1: AIが悩みまたは型を特定できませんでした。")
-            print(f">>> Phase 1: Problem='{selected_problem}', Format='{selected_format}'")
+                print(f"--- [AGENT_LOG]   - Google Search is DISABLED.")
+                research_summary = "（Google検索は使用されていません）"
 
-            # === フェーズ2: 型に基づく情報収集キーワードの生成 ===
-            print(">>> Phase 2: Generating search keywords...")
-            phase2_prompt = "\n".join([
-                "あなたは、与えられた戦略に基づいて、最適な調査計画を立てるAIリサーチャーです。",
-                f"## 最終目的: 「{selected_problem}」という悩みを、「{selected_format}」という型で解決するツイートを作成するための、精度の高い情報を収集すること。",
-                "\n## 指示", "上記の目的を達成するために、Googleで調査すべき「検索キーワード」を、カンマ区切りで3～5個出力してください。",
-                "## 型に応じたキーワード生成のヒント:", "- もし型が【問題解決型】なら、「集中力 低下 原因 研究」「集中力 回復 方法 科学的根拠」のようなキーワードが必要です。", "- もし型が【比較検証型】なら、「朝活 夜活 メリット デメリット 研究」「クロノタイプ 診断」のようなキーワードが必要です。",
-                "あなたの役割は、選ばれた型を構成するために必要な情報を逆算し、最適な検索キーワードを設計することです。キーワードのみを出力してください。"
-            ])
-            phase2_response = client.models.generate_content(model=model_id, contents=phase2_prompt)
-            search_keywords = phase2_response.text.strip()
-            if not search_keywords: raise Exception("Phase 2: AI failed to generate search keywords.")
-            print(f">>> Phase 2: Keywords generated: {search_keywords}")
-
-            # === フェーズ3: 情報収集・整理 ===
-            print(">>> Phase 3: Researching the solution...")
-            phase3_prompt = "\n".join([
-                "あなたは、プロのAIリサーチャーです。",
-                f"## 最終目的: 「{selected_problem}」という悩みを、「{selected_format}」という型で解決するツイートを作成するための根拠となる、信頼性が高く効果的な情報を収集・要約してください。",
-                "\n## 指示", f"以下の【検索キーワード群】を使ってWeb調査を行い、【ユーザーの悩み】を解決するための、具体的で信頼性の高い情報を3～5個の箇条書きでリストアップしてください。",
-                f"  - ユーザーの悩み: {selected_problem}", f"  - 調査に使う検索キーワード群: {search_keywords}",
-                "- 複数のキーワードから得られた情報を統合し、最も本質的で効果的な解決策を要約してください。", "- あなた自身の意見やツイート本文の提案は含めず、事実のリストアップに徹してください。"
-            ])
-            research_config = genai_types.GenerateContentConfig(tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())])
-            phase3_response = client.models.generate_content(model=model_id, contents=phase3_prompt, config=research_config)
-            research_summary = phase3_response.text.strip()
-            if phase3_response.candidates and hasattr(phase3_response.candidates[0], 'grounding_metadata'):
-                g_meta = phase3_response.candidates[0].grounding_metadata
-                if hasattr(g_meta, 'citations') and g_meta.citations:
-                    grounding_info_to_return = [{"uri": getattr(c, 'uri', None), "title": getattr(c, 'title', None)} for c in g_meta.citations]
-            if not research_summary: raise Exception("Phase 3: AI failed to research the solution.")
-            print(f">>> Phase 3: Research summary created:\n{research_summary}")
 
             # === フェーズ4: ツイートの初回ドラフト生成 ===
-            print(">>> Phase 4: Generating the first draft...")
-            format_definition = AUTHORITY_TWEET_FORMATS.get(selected_format, {}).get("prompt", "指定された型が見つかりません。")
+            print("\n--- [AGENT_LOG] Phase 4: Generating the first draft...")
+            
+            format_info = AUTHORITY_TWEET_FORMATS.get(selected_format, {})
+            required_elements_list = format_info.get("required_elements", [])
+            elements_for_prompt = "\n- ".join(required_elements_list)
+
             phase4_prompt = "\n".join([
-                "あなたは、与えられた素材の**論理的な関連性**を重視し、読者が納得できる文章を構築するプロのライターです。",
-                "\n## ツイートの素材", f"  - 解決するべき悩み: {selected_problem}", f"  - 根拠となるリサーチ情報: {research_summary}",
-                "\n## 矛盾を防ぐための絶対ルール", f"  - 発信者のプロフィール: {persona_profile_for_ai if persona_profile_for_ai else '設定なし'}",
-                "\n## 作成指示", "以下の【ツイートの型】の構造に厳密に従って、最高のツイートを作成してください。",
-                "### 【最重要・禁止事項】",
-                "- **論理の飛躍の禁止:** リサーチ情報で見つけた「企業の事例」や「マクロな統計」と、「個人の学習法」や「個人の働き方」を、**直接的な因果関係があるかのように結びつけることは絶対にしないでください。**",
-                "- **情報の誤用の禁止:** 例えば、「日本マイクロソフトの生産性向上」は、あくまで企業全体の取り組みの結果です。それを個人のスキル習得と直接結びつけるような、誤解を招く表現は厳禁です。",
-                "### 【推奨される表現】",
-                "- 関連性の薄い情報を繋げる場合は、「〇〇社の事例にも通じる考え方ですが…」「これはマクロな話ですが、個人のレベルでも…」のように、**あくまでアナロジー（類推）や参考事例**として提示するに留めてください。",
-                "---", f"### 【ツイートの型】: {selected_format}", format_definition, "---"
+                "あなたは、抽象的なコンセプトを誰もが共感できる「具体的なストーリー」や「実用的なアドバイス」に落とし込むのが得意な、超一流のコンテンツプロデューサーです。",
+                "あなたの唯一のミッションは、読者の悩みを「とにかくシンプルに、伝わりやすく」解決することです。\n",
+                "## 【最重要ゴールデンルール：抽象から具体へ】",
+                "あなたの仕事は、**抽象的なアドバイス（例：『目標を決めよう』）で終わらせず、必ず具体的なアクションや数字（例：『まずは月5万を目指そう』）にまで落とし込んで**、読者に提供することです。",
+                "**（〇〇は？△△は？）のような読者への質問で終わらせるのは、仕事の放棄とみなします。**\n",
+                "## 【必須構成要素】",
+                f"- {elements_for_prompt}\n",
+                "## 【絶対に守るべきルール】",
+                "1. **文字数:** 全体を**必ず140字以内**に収めること。",
+                "2. **簡潔さ:** 難しい言葉や余計な修飾を避け、**一読で理解できる**文章を心がけること。",
+                "3. **価値:** 読者が「これだけで悩みが解決した！」と感じるような、**核心的な価値**を提供すること。\n",
+                "## 【出力】",
+                "- 完成したツイート本文のみを出力してください。見出しや説明は不要です。\n",
+                "## 【あなたが使える素材】",
+                f"- **解決すべき悩み:** {selected_problem}",
+                f"- **根拠となるリサーチ情報:**\n{research_summary}",
+                f"- **発信者のプロフィール（最重要注意点：これはツイートのトーン＆マナーを決めるための参考情報です。ツイートの価値を高めない限り、この情報を無理に本文に含める必要は一切ありません。特に『週4勤務』などの個人的すぎる情報は、通常は不要です。）:**\n{persona_profile_for_ai if persona_profile_for_ai else '設定なし'}\n",
+                "さあ、あなたのプロの技で、最高の解決策を提示してください。"
             ])
-            first_draft_response = client.models.generate_content(model=model_id, contents=phase4_prompt)
-            current_tweet_draft = re.sub(r'^(.*\n)*', '', first_draft_response.text, 1).strip()
+            
+            generation_config = genai_types.GenerateContentConfig(temperature=0.8)
+            first_draft_response = client.models.generate_content(model=model_id, contents=phase4_prompt, config=generation_config)
+            current_tweet_draft = first_draft_response.text.strip()
             
             # ★★★ 自己改善QCループ ★★★
-            MAX_REVISIONS = 8
-            PASSING_SCORE = 90
+            MAX_REVISIONS = 10
+            PASSING_SCORE = 95
             best_score = 0
             best_tweet = current_tweet_draft
             current_research_summary = research_summary
 
             for i in range(MAX_REVISIONS):
-                print(f"\n>>> QC Loop - Iteration {i+1}/{MAX_REVISIONS}...")
+                print(f"\n--- [AGENT_LOG] QC Loop - Iteration {i+1}/{MAX_REVISIONS} ---")
+                print(f"--- [AGENT_LOG]   - Current Draft to be evaluated:\n'''\n{current_tweet_draft}\n'''")
                 
-                # --- フェーズ5: AIによる辛口採点＆指示分岐 ---
-                print(">>>   Phase 5: Quality Check, Scoring, and Task Assignment...")
-                format_definition_for_qc = AUTHORITY_TWEET_FORMATS.get(selected_format, {}).get("prompt", "")
+                print("\n--- [AGENT_LOG]   Phase 5: Quality Check, Scoring, and Task Assignment...")
+                
                 qc_prompt = "\n".join([
-                    "あなたは、超一流のコンテンツ編集長です。ライターが与えられた指示通りにツイート案を作成したかを厳しく評価し、具体的な改善点を指摘してください。",
-                    "\n## ライターに与えられた指示", f"- **採用すべき型:** {selected_format}", f"- **型の定義:**\n```{format_definition_for_qc}```", f"- **守るべきルール:** 論理の飛躍や情報の誤用は禁止されています。",
-                    "\n## ライターが使った素材", f"- **発信者のプロフィール:** {persona_profile_for_ai if persona_profile_for_ai else '設定なし'}", f"- **解決しようとした悩み:** {selected_problem}", f"- **根拠となるリサーチ情報:**\n{current_research_summary}",
+                    "あなたは、結果を出すことにこだわる、超一流のコンテンツ編集長です。",
+                    "ライターが提出したツイート案が、読者の悩みを本当に解決し、アカウントの信頼性を高めるかをかなり厳しく採点してより良く改善するためのフィードバックをしてください。",
+                    "\n## ★★★ 編集部の絶対憲法（グランドルール） ★★★",
+                    "1. **【具体性こそ正義】:** 抽象論は罪。具体的な数字、固有名詞、アクションプランを含んでこそ価値がある。",
+                    "2. **【140字の芸術】:** 長文は自己満足。140字以内で核心を突くのがプロの仕事。",
+                    "3. **【一読で理解】:** 読者に考えさせたら負け。中学生でも分かる言葉で語ること。",
+                    "4. **【悩みの解決】:** ツイートの目的は、読者の悩みをピンポイントで解決すること。それ以外の要素はノイズ。",
+                    "5. **【一貫性】:** 発信者のプロフィールと矛盾した内容は、信頼を失うため絶対に許されない。",
+
                     "\n## 評価対象ツイート（ライターからの提出物）", "```", current_tweet_draft, "```",
-                    "\n## 指示", "上記の**【ライターに与えられた指示】**を遵守できているかという観点で、以下の採点基準でツイート案を100点満点で採点してください。**もし権威性や具体性が不足していると感じた場合は、フィードバックに『〇〇に関する追加情報が必要です』と明確に記述してください。**",
-                    "### 【採点基準】", "- **論理の一貫性 (30点):** **論理の飛躍や無関係な情報の強引な結合がないか？（最重要）**", "- **型の遵守度 (20点):** 指定された「型」の構造から逸脱していないか？", "- **目的達成度 (20点):** ツイートの目的（悩みのピンポイント解決）を達成しているか？",
-                    "- **具体性 (15点):** 読者がすぐに行動できる具体的なアクションが示されているか？", "- **感情的魅力 (15点):** 読者の心を動かす共感や希望があるか？",
-                    "\n### 【出力形式】", '```json', '{', '  "score": { "total": <合計点>, ... },', f'  "feedback": "（もし{PASSING_SCORE}点未満なら具体的な改善点を記述。{PASSING_SCORE}点以上なら『合格』と記述）"', '}', '```'
+                    
+                    "\n## 評価のための参考情報",
+                    f"- **解決すべき悩み:** {selected_problem}",
+                    f"- **根拠となったリサーチ情報:**\n{current_research_summary}",
+                    f"- **発信者のプロフィール:**\n{persona_profile_for_ai if persona_profile_for_ai else '設定なし'}\n",
+
+                    "\n## 指示",
+                    "上記の**【絶対憲法】**と**【参考情報】**を元に、ツイート案を100点満点で採点してください。",
+                    "**【一貫性】の評価では、表面的な数字のズレだけでなく、文脈を読んでください。** 例えば、月20万円稼ぐ人が『最初のステップとして月1万円を目指そう』と語るのは、ストーリーとして自然であり、**矛盾ではありません。**",
+                    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                    # ★ QC AIに追加リサーチを命じる権限を与える ★
+                    # ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+                    "**【重要】もしツイートの主張を裏付けるための【根拠となるリサーチ情報】が不足している、または質が低いと感じた場合は、フィードバックに『〇〇に関する追加リサーチが必要です』と明確に記述してください。**",
+                    "** 見やすい投稿にするために改行の指示もしてください**",
+                    
+                    "\n### 【採点基準】",
+                    "- **悩みのピンポイント解決度 (20点):** 『解決すべき悩み』に直接答えているか？",
+                    "- **具体性と核心的価値 (20点):** 抽象論に逃げず、具体的な数字や行動が示されているか？",
+                    "- **文字数と簡潔さ (20点):** 140字以内で、かつ一読で理解でき、見やすい改行になってるか？",
+                    "- **プロフィールとの文脈的一貫性 (10点):** 発信者のストーリーや立場と、文脈的に矛盾がないか？",
+                    "- **ツイート型 (15点):** 選択されたツイートの型の要素をみたしてるか",
+                    "- **権威性 (15点):** 読者を信頼させるデータや出典があるか",
+
+                    "\n### 【出力形式】",
+                    '```json', '{', '  "score": { "total": <合計点>, ... },', f'  "feedback": "（もし{PASSING_SCORE}点未満なら具体的な改善点を記述。{PASSING_SCORE}点以上なら『合格』と記述）"', '}', '```'
                 ])
                 qc_response = client.models.generate_content(model=model_id, contents=qc_prompt)
                 
@@ -2630,40 +2581,34 @@ def generate_initial_tweet():
                     current_score = qc_result.get("score", {}).get("total", 0)
                     feedback = qc_result.get("feedback", "")
                 except (json.JSONDecodeError, KeyError) as e:
-                    print(f"!!! QC Loop failed to parse AI response: {e}. Raw: '{qc_response.text}'. Breaking."); break
+                    print(f"!!! [AGENT_LOG] QC Loop failed to parse AI response: {e}. Raw: '{qc_response.text}'. Breaking loop."); break
                 
-                print(f">>>   Score: {current_score}/{PASSING_SCORE}")
-                print("-------------------- FEEDBACK --------------------")
-                print(feedback)
-                print("-------------------------------------------------")
+                print(f"--- [AGENT_LOG]   - QC Score: {current_score} / {PASSING_SCORE}")
+                print(f"--- [AGENT_LOG]   - QC Feedback:\n'''\n{feedback}\n'''")
                 
                 if current_score > best_score:
                     best_score = current_score
                     best_tweet = current_tweet_draft
                 if current_score >= PASSING_SCORE:
-                    print(f">>> QC Passed! Final score: {current_score}."); break
+                    print(f"--- [AGENT_LOG]   - QC Passed! Final score: {current_score}. Exiting loop.")
+                    break
 
                 if i < MAX_REVISIONS - 1:
-                    # --- フェーズ5.8: 指示の再構成（ToDoリスト化）---
-                    print(">>>   Phase 5.8: Converting feedback to a ToDo list (by Desk)...")
+                    print("\n--- [AGENT_LOG]   Phase 5.8: Converting feedback to a ToDo list...")
                     todo_prompt = "\n".join([
-                        "あなたは、厳しい編集長の意図を正確に汲み取り、ライターへの**「具体的で実行可能な作業指示」**に落とし込む、超優秀なデスク担当者です。",
-                        "\n## あなたが使えるすべての素材", f"- 採用すべき型: {selected_format}", f"- 型の定義:\n```{format_definition}```", f"- 根拠となるリサーチ情報:\n{current_research_summary}",
+                        "あなたは、編集長の意図を正確に汲み取り、ライターへの**「具体的で実行可能な作業指示」**に落とし込む、超優秀なデスク担当者です。",
+                        "\n## 編集部の絶対憲法",
+                        "1. **具体性こそ正義**", "2. **140字の芸術**", "3. **一読で理解**", "4. **悩みをピンポイント解決**", "5. **プロフィールと一貫性**",
                         "\n## 編集長からのフィードバック", "```", feedback, "```",
-                        "\n## 指示", "編集長のフィードバックと、あなたが使えるすべての素材を元に、ライターが**次に何をすべきか**を、**極めて具体的な「修正指示ToDoリスト」**として箇条書きで出力してください。",
-                        "### 【ToDoリスト作成のルール】",
-                        "- **ダメ出しではなく、具体的なアクションを指示する:** 「具体性が足りない」ではなく、「リサーチ情報にある『クラウドワークス』という固有名詞を、ツイートの手順部分に追記せよ」のように記述する。",
-                        "- **素材と型を結びつける:** 「リサーチ情報の【〇〇というデータ】を、【問題解決型】の【権威ある問題提起】のパートに、このように挿入せよ」といった、具体的なマッピング指示を行う。",
-                        "- **文章レベルでの指示:** 「冒頭の『〇〇』という表現を、もっと共感を呼ぶ『△△』という表現に書き換えよ」のように、具体的な文章の修正案を提示する。"
+                        "\n## 指示", "編集長のフィードバックと絶対憲法を元に、ライターが**次に何をすべきか**を、**極めて具体的な「修正指示ToDoリスト」**として箇条書きで出力してください。",
+                        "特に、フィードバックに『具体性が足りない』や『追加リサーチが必要』といった指摘があれば、**『〇〇という固有名詞を追加せよ』『△△について追加調査せよ』**のように、ToDoを具体化することがあなたの重要な役割です。"
                     ])
                     todo_response = client.models.generate_content(model=model_id, contents=todo_prompt)
                     todo_list = todo_response.text.strip()
-                    print(f">>>   ToDo List:\n{todo_list}")
+                    print(f"--- [AGENT_LOG]   - Generated ToDo List:\n'''\n{todo_list}\n'''")
                     
-                    # --- フェーズ6: 追加リサーチ（必要な場合のみ）---
-                    research_needed_keywords = ["追加情報", "リサーチ", "調査", "権威性", "データ", "根拠"]
-                    if any(keyword in todo_list for keyword in research_needed_keywords):
-                        print(">>>   Phase 6: Executing additional research based on ToDo list (by Researcher)...")
+                    if any(keyword in todo_list for keyword in ["追加情報", "リサーチ", "調査", "権威性", "データ", "根拠"]):
+                        print("\n--- [AGENT_LOG]   Phase 6: Executing additional research based on ToDo list...")
                         additional_research_prompt = "\n".join([
                             "あなたは、デスク担当者からの調査依頼に基づき、深掘り調査を行うAIリサーチャーです。",
                             f"\n## 調査依頼（ToDoリスト）\n{todo_list}",
@@ -2673,124 +2618,347 @@ def generate_initial_tweet():
                         additional_research_response = client.models.generate_content(model=model_id, contents=additional_research_prompt, config=additional_research_config)
                         additional_summary = additional_research_response.text.strip()
                         if additional_summary:
-                            print(f">>>   Additional research summary:\n{additional_summary}")
+                            print(f"--- [AGENT_LOG]     - Additional research summary found.")
                             current_research_summary += f"\n\n【追加リサーチ情報】\n{additional_summary}"
                     
-                    # --- フェーズ7: ゼロからの再生成 ---
-                    print(f">>>   Phase 7: Regenerating the tweet from scratch based on ToDo list...")
-                    rewrite_prompt = "\n".join([
-                        "あなたは、渡された**最終指示書（ToDoリスト）**と**素材**を元に、指定された「型」に沿ってツイートを**ゼロから書き上げる**プロのライターです。",
-                        "\n## ★★★ 最優先事項 ★★★",
-                        f"このツイートの目的は、読者の『{selected_problem}』という悩みをピンポイントで解決することです。必ずこのテーマに沿った内容にしてください。",
-                        "\n## あなたが完成させるべき【ツイートの型】",
-                        f"- **型名:** {selected_format}", f"- **型の定義（構造と例）:**\n```{format_definition}```",
-                        "\n## あなたが使えるすべての素材",
-                        f"- **発信者のプロフィール（矛盾チェック用）:** {persona_profile_for_ai if persona_profile_for_ai else '設定なし'}",
-                        f"- **根拠となるリサーチ情報:**\n{current_research_summary}",
-                        "\n## ★★★ あなたが実行すべき最終指示書（ToDoリスト） ★★★",
+                    print("\n--- [AGENT_LOG]   Phase 7: Revising the tweet based on ToDo list...")
+                    revise_prompt = "\n".join([
+                        "あなたは、編集デスクからの**具体的な修正指示**に従って、既存のツイート案を改善するプロのライターです。",
+                        "\n## ★★★ あなたが修正すべき、現在のツイート案 ★★★",
+                        "```", current_tweet_draft, "```",
+                        "\n## ★★★ あなたが従うべき、具体的な修正指示書（ToDoリスト） ★★★",
                         "```", todo_list, "```",
-                        "\n## 指示",
-                        "**これまでのドラフトはすべて忘れ、上記の【最終指示書】と【あなたが使えるすべての素材】だけを元に、ツイートをゼロから完全に新しく作成してください。**",
-                        "**最優先事項は、【ツイートの型】の構造を守りつつ、【最終指示書】をすべて反映させることです。**",
+                        "\n## 参考情報（修正時に利用可能）",
+                        f"- **ツイートの型:** {selected_format}",
+                        f"- **根拠となるリサーチ情報:**\n{current_research_summary}",
+                        "\n## あなたのタスク",
+                        "**【現在のツイート案】**に対して、**【具体的な修正指示書】**に書かれている修正を**すべて**適用してください。",
+                        "ゼロから書き直すのではなく、元の文章の良い部分は活かしつつ、指示された箇所だけを的確に修正・改善すること。",
                         "完成したツイート本文のみを出力してください。"
                     ])
-                    rewrite_response = client.models.generate_content(model=model_id, contents=rewrite_prompt)
-                    current_tweet_draft = re.sub(r'^(.*\n)*', '', rewrite_response.text, 1).strip()
-                    print("----------------- REWRITTEN DRAFT -----------------")
-                    print(current_tweet_draft)
-                    print("--------------------------------------------------")
-                    time.sleep(1)
+                    
+                    revise_generation_config = genai_types.GenerateContentConfig(temperature=0.7)
+                    revise_response = client.models.generate_content(model=model_id, contents=revise_prompt, config=revise_generation_config)
+                    current_tweet_draft = revise_response.text.strip()
+                    print(f"--- [AGENT_LOG]   - Revised Draft created.")
+
                 else:
-                    print(">>> Max revisions reached. Outputting the best tweet so far.")
+                    print("--- [AGENT_LOG] Max revisions reached. Outputting the best tweet so far.")
             
             final_tweet = best_tweet
 
         else:
-            # --- それ以外のツイート（自己紹介など）の場合：従来の1段階処理を実行 ---
+            # --- それ以外のツイート（自己紹介など）の場合 ---
             print(f">>> Executing 1-step generation for '{initial_post_type}'...")
             
             research_summary = ""
-            if use_Google_Search_flag and theme.strip():
-                try:
-                    print(">>> Research phase for non-value-tips post...")
-                    current_year = datetime.datetime.now().year
-                    research_prompt_text = "\n".join([
-                        "あなたは、与えられたテーマについて、信頼性の高い情報を迅速に調査・要約するプロのAIリサーチャーです。",
-                        "あなたの唯一のタスクは、後続のツイート生成AIが最高の「ネタ」として使える、客観的で興味深い事実を3～5個、箇条書きでリストアップすることです。",
-                        f"\n## 主要な調査テーマ: {theme}",
-                        f"\n## 参考情報（調査の文脈）:",
-                        f"  - 調査対象の読者層: {target_persona_summary}",
-                        f"  - アカウントの目的: {account_purpose}",
-                        "\n## 調査・要約の指示:",
-                        f"  - 必ず「{current_year}」や「最新」の情報を優先してください。",
-                        "  - 具体的な数値データ、統計、専門機関の発表、意外な事実などを重視してください。",
-                        "  - 各項目は、ツイートに引用しやすいように、簡潔な日本語で記述してください。",
-                        "  - あなた自身の意見や、ツイート本文の提案は絶対に含めないでください。事実のリストアップに徹してください。"
-                    ])
-                    research_config = genai_types.GenerateContentConfig(tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())])
-                    research_response = client.models.generate_content(model=model_id, contents=research_prompt_text, config=research_config)
-                    research_summary = research_response.text.strip()
-                    if research_response.candidates and hasattr(research_response.candidates[0], 'grounding_metadata'):
-                        g_meta = research_response.candidates[0].grounding_metadata
-                        if hasattr(g_meta, 'citations') and g_meta.citations:
-                            grounding_info_to_return = [{"uri": getattr(c, 'uri', None), "title": getattr(c, 'title', None)} for c in g_meta.citations]
-                    print(f">>> Research summary created for non-value-tips post:\n{research_summary}")
-                except Exception as e_research:
-                    print(f"!!! Exception during research for non-value-tips post: {e_research}")
-                    research_summary = f"（最新情報の調査中にエラーが発生しました: {str(e_research)}）"
-            
-            prompt_parts = [
-                "あなたは、X（旧Twitter）で数々のバズを生み出してきた、言葉選びのセンスが抜群のコンテンツクリエイターです。",
-                "あなたの仕事は、クライアントのアカウント情報を元に、読者の心を掴んで離さない、多様な切り口のツイート案を無限に生み出すことです。",
-                "以下の【ツイートの素材】と【作成指示】に基づいて、最高のツイート案を1つ作成してください。",
-                "\n## ツイートの素材（ヒント）:",
-                f"  - このアカウントの主人公（発信者）は、おそらく「{target_persona_summary}」という悩みを乗り越えた経験を持っています。",
-                f"  - このアカウントが最終的に届けたい想い（パーパス）は「{account_purpose}」です。",
-                f"  - このアカウントが提供する約束（コアバリュー）は「{core_value_proposition}」です。",
-            ]
-            if persona_profile_for_ai and persona_profile_for_ai.strip():
-                 prompt_parts.extend(["\n## 矛盾を防ぐための絶対ルール：発信者の現在地", f"  - プロフィール: {persona_profile_for_ai}", "  - 注意: 生成するツイートは、必ずこのプロフィールと矛盾しないようにしてください。これはツイートのテーマではなく、矛盾を防ぐための「背景情報」です。", "  - NG例: 「フルリモートで成功している」というプロフィールなのに「パート先で嫌なことがあった」など、現在の立場と明らかに食い違う内容は絶対に含めないでください。"])
-            if research_summary:
-                prompt_parts.append(f"\n## 参考となる最新リサーチ情報（必要に応じて活用）:\n{research_summary}")
-            if initial_post_type == "follow_reason":
-                prompt_parts.append("\n## 今回のツイート作成指示:【フォローすべき理由】")
-                prompt_parts.append("  - **思考のフレームワーク**: 以下の3つの心理的トリガーを刺激する要素を、あなたの卓越した文章力で自然に織り交ぜてください。")
-                prompt_parts.append("    1. **自己関連付け (Self-Reference)**: 読者が『これは、まさに私のことだ…』とドキッとするような、具体的な悩みや状況を指摘する『問いかけ』。")
-                prompt_parts.append("    2. **ゲインフレーム (Gain Frame)**: フォローすることで得られる『理想の未来』や『具体的なメリット』を、読者が鮮明にイメージできるように描写する。")
-                prompt_parts.append("    3. **独自性 (Uniqueness)**: このアカウントでしか得られない『ユニークな価値』や『他とは違う視点』を明確に提示する。")
-                prompt_parts.append(f"  - **テーマ**: {theme if theme else 'このアカウントをフォローすべき理由を、感情と論理の両面に訴えかける形で表現してください。'}")
-            elif initial_post_type == "self_introduction":
-                prompt_parts.append("\n## 今回のツイート作成指示:【自己紹介（自分神話の断片）】")
-                prompt_parts.append("  - **思考のフレームワーク**: 以下の3つのストーリーテリング要素を、あなたの卓越した文章力でドラマチックに繋ぎ合わせてください。")
-                prompt_parts.append("    1. **共感の谷 (Valley of Empathy)**: 読者と同じか、それ以上に『ダメダメだった過去』や『壮絶な失敗談』を、正直かつ具体的に描写する。")
-                prompt_parts.append("    2. **転換点 (Turning Point)**: そのどん底の状態から這い上がる『きっかけ』となった出来事や、考え方の変化を簡潔に示す。")
-                prompt_parts.append("    3. **理念の光 (Beacon of Philosophy)**: なぜ今、この情報発信をしているのか。その根底にある『情熱』や『譲れない想い』を、力強く宣言する。")
-                prompt_parts.append(f"  - **テーマ**: {theme if theme else 'あなた自身の言葉で、読者の心を動かすショートストーリーを作成してください。'}")
-            else:
-                prompt_parts.append("\n## 今回のツイート作成指示:【自由テーマ】")
-                prompt_parts.append("  - **思考のフレームワーク**: 以下のいずれか、または複数の要素を自由に組み合わせて、あなたのセンスで最高のツイートを作成してください。『時事ネタへの専門的見解』、『ターゲット層への鋭い問いかけ』、『個人的な体験談からの学び』、『意外な統計データと考察』。")
-                prompt_parts.append(f"  - **テーマ**: {theme if theme else '自由にテーマを設定し、読者の興味を引くツイートを作成してください。'}")
+            # ... (この部分は変更なし) ...
             
             prompt = "\n".join(filter(None, prompt_parts))
             generation_config = genai_types.GenerateContentConfig(temperature=0.7)
-            print(f">>> Final prompt for generation (non-value-tips):\n{prompt[:600]}...")
             response = client.models.generate_content(model=model_id, contents=prompt, config=generation_config)
-            final_tweet = re.sub(r'^(.*\n)*', '', response.text, 1).strip()
+            final_tweet = response.text.strip()
         
         # --- 共通の最終処理 ---
         if not final_tweet:
             raise Exception("AIによるツイート生成に失敗しました。")
 
+        print("\n" + "="*80)
+        print("--- [AGENT_LOG] END: generate_initial_tweet process (SUCCESS) ---")
+        print(f"--- [AGENT_LOG] Final Tweet to be returned:\n'''\n{final_tweet}\n'''")
+        print("="*80 + "\n")
+        
         return jsonify({
             "generated_tweet": final_tweet,
             "grounding_info": grounding_info_to_return 
         }), 200
 
     except Exception as e:
-        print(f"!!! Major exception in generate_initial_tweet: {e}")
+        print(f"!!! [AGENT_LOG] CRITICAL EXCEPTION in generate_initial_tweet: {e}")
         traceback.print_exc()
+        print("\n" + "="*80)
+        print("--- [AGENT_LOG] END: generate_initial_tweet process (with error) ---")
+        print("="*80 + "\n")
         return jsonify({"message": "AIによる初期ツイート生成中に予期せぬエラーが発生しました。", "error": str(e)}), 500
     
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+# ★ 悩み生成関数。 ★
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+@app.route('/api/v1/problems/generate', methods=['POST'])
+@token_required
+def generate_problems():
+    global client
+    if not client:
+        return jsonify({"message": "Gen AI Client is not initialized. Check API Key."}), 500
+
+    print("\n" + "="*80)
+    print("--- [AGENT_LOG] START: generate_problems process (17 Hybrid Equations Method) ---")
+    print("="*80)
+
+    user_id = g.user.id
+    try:
+        data = request.json
+        print(f"--- [AGENT_LOG] 1. Received request data:\n{json.dumps(data, indent=2, ensure_ascii=False)}")
+        x_account_id = data.get('x_account_id')
+        if not x_account_id:
+            return jsonify({"error": "x_account_idは必須です"}), 400
+
+        # --- ペルソナ情報の収集 ---
+        account_strategy_res = supabase.table('account_strategies').select('main_target_audience').eq('x_account_id', x_account_id).eq('user_id', user_id).single().execute()
+        strategy_data = account_strategy_res.data
+        
+        target_persona_summary = "一般的なフォロワー"
+        main_target_audience_data = strategy_data.get('main_target_audience')
+        if main_target_audience_data and isinstance(main_target_audience_data, list) and main_target_audience_data:
+            first_persona = main_target_audience_data[0]
+            if isinstance(first_persona, dict):
+                name = first_persona.get('name', '')
+                age = first_persona.get('age', '')
+                problem = first_persona.get('悩み', '')
+                target_persona_summary = f"ペルソナ「{name}」({age})の悩みは「{problem}」"
+
+        user_profile = getattr(g, 'profile', {})
+        model_id = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
+
+        # === フェーズ1: 17のハイブリッド方程式による悩みの発散的生成 ===
+        print("\n--- [AGENT_LOG] Phase 1: Divergent thinking with 17 Hybrid Equations...")
+        
+        # 感情エンジン（12の葛藤方程式）
+        conflict_equations = [
+            "【理想 vs 現実】: [こうありたいという理想] がある。しかし [目を背けたい不甲斐ない現実] がある。",
+            "【義務 vs 欲望】: [やるべきこと（理性）] は分かっている。しかし [楽をしたいという誘惑（本能）] に勝てない。",
+            "【過去の栄光 vs 現在の停滞】: [過去はこうだったという輝かしい記憶] がある。しかし [それに比べて今の自分は停滞している] という焦りがある。",
+            "【挑戦への希望 vs 失敗への恐怖】: [新しいことに挑戦したいという希望] がある。しかし [過去の失敗体験や、未知への恐怖] が足を引っ張る。",
+            "【承認欲求 vs 他者からの無理解】: [特定の人に認められたい] と願う。しかし [その人からは心ない言葉や無関心な態度] を示される。",
+            "【自己主張 vs 関係性の悪化リスク】: [自分の本音を主張したい]。しかし [それを言うことで、相手との関係が悪化するのが怖い]。",
+            "【優越感への渇望 vs 他者との比較による劣等感】: [他人より優位に立ちたい] という欲求がある。しかし [キラキラした他人と自分を比べて] 劣等感を抱いている。",
+            "【時間の有限性 vs 無限の選択肢】: [人生の時間は限られているという焦り] がある。しかし [世の中には情報や選択肢が溢れすぎていて]、何から手をつければいいか分からない。",
+            "【経済的自由への憧れ vs 社会的制約】: [もっと自由にお金を使いたいという憧れ] がある。しかし [扶養、税金などの社会的制約] に縛られている。",
+            "【個人の成長意欲 vs 環境の変化】: [自分は成長したいと強く願っている]。しかし [自分ではコントロールできない環境の変化] に対応せざるを得ない。",
+            "【正当な情報への渇望 vs 信頼できない情報源】: [本当に信頼できる情報が知りたい]。しかし [ネット上には怪しい儲け話や、自分とはかけ離れた成功談ばかり] で何を選べばいいか分からない。",
+            "【未来への希望 vs 過去への後悔】: [こうすれば未来は変えられるかもしれないという希望]。しかし [『あの時ああしていれば…』という過去への後悔] が、新しい一歩を躊躇させる。"
+        ]
+
+        # 行動エンジン（5つのアクション方程式）
+        action_equations = [
+            "【目標設定の壁】: [〇〇したい]という願望はあるが、[具体的な目標（何を・いつまでに・どのくらい）]に落とし込めず、行動が始まらない。",
+            "【情報収集の壁】: [〇〇を学ぶため]に情報を集めているが、[特定の情報（どの本、どのサイト、どのツール）]が信頼できるか分からず、立ち往生している。",
+            "【学習・実践の壁】: [〇〇をやってみた]が、[具体的なエラーや問題（××ができない、△△でつまずく）]にぶつかり、解決できずに挫折しそう。",
+            "【継続・習慣化の壁】: [〇〇を続ける]と決めたのに、[具体的な障害（急な残業、子供の夜泣き）]によって計画が崩れ、自己嫌悪に陥る。",
+            "【収益化・応用の壁】: [〇〇のスキル]は少し身についたが、[それをどうやってお金に変えるか（営業方法、価格設定）]が全く分からず、宝の持ち腐れになっている。"
+        ]
+
+        # 全ての方程式を結合
+        all_equations = conflict_equations + action_equations
+        
+        mindmap_prompt = "\n".join([
+            "あなたは、人間の深層心理と行動原理を深く理解し、それを心を揺さぶる言葉に変換するプロのコピーライター兼マーケティング戦略家です。",
+            "あなたの仕事は、指定されたペルソナが抱えるであろう「葛藤」や「行動の壁」を、多様な切り口から、具体的で共感を呼ぶ「悩み」として言語化することです。\n",
+            "## あなたが思考の前提とする情報",
+            f"- **ペルソナ:** {target_persona_summary}\n",
+            "## ★★★ あなたが実行すべき思考法：17のハイブリッド方程式 ★★★",
+            "以下の**17個の『方程式』**のそれぞれを思考の起点としてください。",
+            "各方程式の[ ]の中身をペルソナの状況に合わせて埋めることで、具体的な悩みを**それぞれ3個ずつ**、合計で約50個生成してください。\n",
+            "### 17の方程式（感情エンジン + 行動エンジン）",
+            "\n".join(f"- {eq}" for eq in all_equations),
+            "\n## 指示",
+            "上記の思考法を用いて、合計約50個の具体的な悩みを生成し、以下のJSON形式で出力してください。",
+            "**『感情的な悩み』と『行動に直結する悩み』がバランス良く含まれるように**、リスト全体を構成してください。",
+            "生成する悩みは、読者が『これ、私のことだ…』と強く共感するような、具体的で生々しい言葉で記述してください。\n",
+            "## 最終的な出力形式",
+            "```json",
+            "{",
+            '  "generated_problems": [',
+            '    { "equation_type": "理想 vs 現実", "problem_text": "（この方程式から生まれた悩み1）" },',
+            '    { "equation_type": "目標設定の壁", "problem_text": "（この方程式から生まれた悩み2）" },',
+            "    ...",
+            '    { "equation_type": "収益化・応用の壁", "problem_text": "（この方程式から生まれた悩み51）" }',
+            "  ]",
+            "}",
+            "```",
+            "JSON以外の説明文は、一切含めないでください。"
+        ])
+
+        generation_config = genai_types.GenerateContentConfig(temperature=0.95) # 多様性を最大化
+        response = client.models.generate_content(model=model_id, contents=mindmap_prompt, config=generation_config)
+        
+        try:
+            json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+            if not json_match: raise json.JSONDecodeError("No JSON object found.", response.text, 0)
+            initial_problems = json.loads(json_match.group(0)).get("generated_problems", [])
+        except (json.JSONDecodeError, KeyError) as e:
+            raise Exception(f"Phase 1 failed to parse AI response: {e}")
+
+        print(f"--- [AGENT_LOG]   - Generated {len(initial_problems)} draft problems.")
+        
+        # === フェーズ2 & 3: QCと修正のループ ===
+        MAX_REVISIONS = 2
+        best_problems = initial_problems
+
+        for i in range(MAX_REVISIONS):
+            print(f"\n--- [AGENT_LOG] Problem QC Loop - Iteration {i+1}/{MAX_REVISIONS} ---")
+            
+            qc_prompt = "\n".join([
+                "あなたは、読者の心を一瞬で掴む言葉を見つけ出すのが得意な、超一流の編集長です。",
+                "コピーライターが提出した『悩みのドラフトリスト』を評価し、品質が低いものを指摘・修正してください。\n",
+                "## 品質の低い悩みの定義",
+                "- **抽象的すぎる:** 『〇〇について知りたい』のような、誰にでも当てはまる漠然とした悩み。",
+                "- **行動に繋がらない:** 感情の吐露だけで終わり、『じゃあ、どうすれば？』という具体的な行動課題が見えない悩み。",
+                "- **重複している:** リスト内に、本質的に同じ悩みが複数含まれている。\n",
+                "## ドラフトリスト",
+                "```json",
+                json.dumps(best_problems, indent=2, ensure_ascii=False),
+                "```\n",
+                "## 指示",
+                f"1. **評価:** リストに品質の低い悩みが含まれていないか、また、重複がないか、悩みの総数が50個に満たない場合は、その旨を指摘してください。",
+                "2. **フィードバック:** もし改善点がある場合、具体的な修正指示を出してください。修正指示がない場合は、`feedback`は`'合格'`としてください。",
+                "3. **修正:** フィードバックに基づき、リスト全体を修正・再生成し、必ず50個の**重複がなく、それぞれが『感情』と『行動』の両面で鋭い言葉で表現された高品質な悩み**のリストにしてください。\n",
+                "## 出力形式",
+                "```json",
+                '{',
+                '  "feedback": "（具体的な改善指示、または『合格』）",',
+                '  "revised_problems": [ ... ]',
+                '}',
+                "```"
+            ])
+
+            qc_response = client.models.generate_content(model=model_id, contents=qc_prompt)
+            
+            try:
+                json_match = re.search(r'\{.*\}', qc_response.text, re.DOTALL)
+                if not json_match: raise json.JSONDecodeError("No JSON object found.", qc_response.text, 0)
+                qc_result = json.loads(json_match.group(0))
+                feedback = qc_result.get("feedback", "")
+                revised_problems = qc_result.get("revised_problems", [])
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"!!! [AGENT_LOG] Problem QC Loop failed to parse AI response: {e}. Breaking loop."); break
+            
+            print(f"--- [AGENT_LOG]   - QC Feedback:\n'''\n{feedback}\n'''")
+            best_problems = revised_problems
+            
+            if feedback == '合格':
+                print(f"--- [AGENT_LOG]   - QC Passed! Exiting loop.")
+                break
+        
+        # === 最終出力 ===
+        print(f"\n--- [AGENT_LOG] 4. Finalizing {len(best_problems)} problems to return to frontend...")
+        final_problems_for_frontend = [{"problem_text": p.get("problem_text"), "pain_point": p.get("equation_type", "不明")} for p in best_problems]
+        return jsonify({"generated_problems": final_problems_for_frontend}), 200
+
+    except Exception as e:
+        print(f"!!! [AGENT_LOG] CRITICAL EXCEPTION in generate_problems: {e}"); traceback.print_exc()
+        return jsonify({"message": "悩みリストの生成中にエラーが発生しました。", "error": str(e)}), 500
+
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+# ★ フロントエンドから悩みリストを受け取って保存する ★
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+@app.route('/api/v1/problems/save', methods=['POST'])
+@token_required
+def save_problems():
+    user_id = g.user.id
+    try:
+        data = request.json
+        problems_to_save = data.get('problems_to_save', [])
+        x_account_id = data.get('x_account_id')
+
+        if not problems_to_save or not x_account_id:
+            return jsonify({"error": "保存する悩みリストとx_account_idは必須です"}), 400
+
+        problems_to_insert = [
+            {
+                "user_id": user_id,
+                "x_account_id": x_account_id,
+                "problem_text": item.get("problem_text"),
+                "pain_point": item.get("pain_point"),
+                "status": "saved" # 保存するのでステータスを'saved'に
+            }
+            for item in problems_to_save if item.get("problem_text")
+        ]
+
+        if not problems_to_insert:
+            return jsonify({"error": "保存する有効な悩みがありません"}), 400
+
+        insert_res = supabase.table('generated_problems').insert(problems_to_insert).execute()
+
+        if insert_res.data:
+            return jsonify({"message": f"{len(insert_res.data)}件の悩みを保存しました。"}), 201
+        else:
+            error_message = "Unknown error"
+            if insert_res.error:
+                error_message = insert_res.error.message
+            raise Exception(f"データベースへの保存に失敗しました。Error: {error_message}")
+
+    except Exception as e:
+        print(f"!!! Exception in save_problems: {e}"); traceback.print_exc()
+        return jsonify({"message": "悩みの保存中にエラーが発生しました。", "error": str(e)}), 500
+    
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+# ★ 保存済みの悩みリストを取得するAPI。 ★
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+@app.route('/api/v1/problems', methods=['GET'])
+@token_required
+def get_problems():
+    user_id = g.user.id
+    try:
+        x_account_id = request.args.get('x_account_id')
+        if not x_account_id:
+            return jsonify({"error": "x_account_idは必須です"}), 400
+
+        # 保存済みの悩み（statusが'saved'）を取得し、作成日の降順で並び替え
+        problems_res = supabase.table('generated_problems') \
+            .select('*') \
+            .eq('user_id', user_id) \
+            .eq('x_account_id', x_account_id) \
+            .eq('status', 'saved') \
+            .order('created_at', desc=True) \
+            .execute()
+
+        if problems_res.data:
+            return jsonify(problems_res.data), 200
+        else:
+            return jsonify([]), 200 # データがなくても空のリストを返す
+
+    except Exception as e:
+        print(f"!!! Exception in get_problems: {e}"); traceback.print_exc()
+        return jsonify({"message": "悩みリストの取得中にエラーが発生しました。", "error": str(e)}), 500
+
+
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+# ★ 選択した悩みを削除するAPI。これをapp.pyに追加 ★
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+@app.route('/api/v1/problems', methods=['DELETE'])
+@token_required
+def delete_problems():
+    user_id = g.user.id
+    try:
+        data = request.json
+        problem_ids = data.get('problem_ids', []) # 削除する悩みのIDリスト
+        if not problem_ids:
+            return jsonify({"error": "削除する悩みのIDを指定してください"}), 400
+
+        # 指定されたIDの悩みを削除
+        delete_res = supabase.table('generated_problems') \
+            .delete() \
+            .in_('id', problem_ids) \
+            .eq('user_id', user_id) \
+            .execute()
+
+        if delete_res.data:
+            return jsonify({"message": f"{len(delete_res.data)}件の悩みを削除しました。"}), 200
+        else:
+            # エラーレスポンスがあるか確認
+            error_message = "削除に失敗しました。対象の悩みが見つからないか、権限がありません。"
+            if delete_res.error:
+                error_message = delete_res.error.message
+            raise Exception(error_message)
+
+    except Exception as e:
+        print(f"!!! Exception in delete_problems: {e}"); traceback.print_exc()
+        return jsonify({"message": "悩みの削除中にエラーが発生しました。", "error": str(e)}), 500
+
+
+
+
 # Flaskサーバーの起動
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5001))
