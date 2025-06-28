@@ -16,9 +16,13 @@ import json
 import re 
 import requests
 from bs4 import BeautifulSoup
+import random
 
 load_dotenv()
 app = Flask(__name__)
+
+app = Flask(__name__)
+CORS(app)
 
 # CORS設定
 CRON_JOB_SECRET = os.environ.get('CRON_JOB_SECRET')
@@ -2631,9 +2635,247 @@ def generate_initial_tweet():
         print("="*80 + "\n")
         return jsonify({"message": "AIによる初期ツイート生成中に予期せぬエラーが発生しました。", "error": str(e)}), 500
     
+AUTHOR_TEMPLATES = {
+    "問題提起・深掘り型": """
+    1. 【問い】: 〇〇って、本当に正しいの？
+    2. 【異論/深掘り】: 多くの人はAと言うけど、実はBという視点が重要。
+    3. 【理由/根拠】: なぜなら、〇〇だからだ。
+    4. 【結論/学び】: だから私たちは、△△を意識すべき。
+    """,
+    "持論・逆説型": """
+    1. 【結論/逆説】: 実は、〇〇はしない方がいい。
+    2. 【具体例】: 例えば、△△のケースでは…
+    3. 【理由】: その理由は、〇〇という本質的な問題があるから。
+    4. 【提言】: だから、本当にやるべきは××だ。
+    """,
+    "教訓・ストーリー型": """
+    1. 【結果】: 過去の〇〇という失敗から、△△という最高の教訓を得た。
+    2. 【状況説明】: 当時、私は××な状況で…
+    3. 【失敗の核心】: 失敗の直接の原因は、〇〇という甘い考えにあった。
+    4. 【得られた教訓】: この経験から学んだのは、「（普遍的な学び）」ということ。
+    """
+}
 
+FAMILIARITY_TEMPLATES = {
+    "あるある失敗談型": """
+    1. 【状況描写】: 〇〇しようとしていたら、事件は起きた。
+    2. 【ハプニング】: なんと、××してしまった…！
+    3. 【心境/ツッコミ】: （その時の感情や心の声）
+    4. 【学び/オチ】: この失敗から学んだこと：「（少し笑える教訓）」
+    """,
+    "正直な告白型": """
+    1. 【カミングアウト】: 正直に言うと、私はいまだに〇〇が怖い。
+    2. 【感情の理由】: なぜなら、××と思ってしまうから。
+    3. 【共感の問いかけ】: 同じように感じる人、いませんか？
+    4. 【自己受容】: でも、そんな自分も自分。少しずつ向き合っていこうと思う。
+    """,
+    "日常の発見型": """
+    1. 【出来事】: 今日、〇〇をしていたら、ふと△△なことに気づいた。
+    2. 【心情の変化】: 最初は〇〇だと思っていたけど、よく考えると…
+    3. 【小さな発見】: これって、仕事における××と同じかもしれない。
+    4. 【結論】: 日常にヒントは隠れてる。明日も頑張ろう。
+    """
+}
+
+    
+@app.route('/api/v1/tweets/generate-from-inspiration', methods=['POST', 'OPTIONS'])
+@token_required
+def generate_tweet_from_inspiration():
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
+
+    global client
+    if not client:
+        return jsonify({"message": "Gen AI Client is not initialized."}), 500
+
+    print("\n" + "="*80)
+    print("--- [AGENT_LOG] START: generate_tweet_from_inspiration ---")
+    
+    try:
+        # --- 1. フロントエンドからデータを受け取る ---
+        data = request.json
+        inspiration = data.get('inspiration')
+        tweet_mode = data.get('tweet_mode') # 'A' or 'B'
+        template_name = data.get('template_name')
+        x_account_id = data.get('x_account_id')
+
+        if not all([inspiration, tweet_mode, x_account_id]):
+            return jsonify({"error": "inspiration, tweet_mode, x_account_id は必須です"}), 400
+        
+        inspiration_text = inspiration.get('text')
+        inspiration_genre = inspiration.get('genre')
+
+        print(f"--- [AGENT_LOG]   - Mode: {tweet_mode}, Genre: {inspiration_genre}, Template: {template_name}")
+        print(f"--- [AGENT_LOG]   - Inspiration Text: '{inspiration_text}'")
+
+        # --- 共通で使う情報を準備 ---
+        strategy_res = supabase.table('account_strategies').select('persona_profile_for_ai').eq('x_account_id', x_account_id).maybe_single().execute()
+        owner_profile = ""
+        if strategy_res.data:
+            owner_profile = strategy_res.data.get('persona_profile_for_ai', '')
+        
+        user_profile = getattr(g, 'profile', {})
+        model_id = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
+        final_tweet = ""
+
+        # --- 2. モードに応じてAIへの指示を組み立てる ---
+        role_instruction = "あなたは、与えられた「思考の種」と「指示」に基づいて、140字以内の魅力的なツイートを作成するプロのコンテンツライターです。"
+        
+        # --- モードA: より日常的な投稿にリライト（親近感重視）---
+        if tweet_mode == 'A':
+            print("--- [AGENT_LOG]   - Executing Mode A (Personal & Casual Rewrite)...")
+            main_prompt = f"""
+            ### あなたの役割
+            あなたは、与えられた「思考の種」を、まるでその人が**ふとした瞬間に自分の言葉でつぶやいたかのような、自然で人間味あふれるツイート**にリライトするプロのSNSライターです。
+
+            ### あなたへの具体的な指示
+            以下の【思考の種】を、**より日常的で、親近感が湧くような投稿**に変換してください。
+            論理的に説明しようとするのではなく、その時の**「感情」や「心の声」**が聞こえてくるような文章を目指してください。
+            フォーマルさよりも、**「共感」**を最優先します。
+
+            ### 思考の種
+            {inspiration_text}
+
+            ### 発信者のプロフィール（参考）
+            {owner_profile}
+
+            ### 厳守すべきルール
+            - 全体を140字以内に収めること。
+            - 読者が「わかる！」「私もそうだ…」と感じるような、等身大の言葉を選ぶこと。
+            - 完成したツイート本文のみを出力してください。
+            """
+            response = client.models.generate_content(model=model_id, contents=main_prompt)
+            final_tweet = response.text.strip()
+
+        # --- モードB: 型で構成（品質・権威性重視）---
+        elif tweet_mode == 'B':
+            print("--- [AGENT_LOG]   - Executing Mode B (Self-Improving QC Loop)...")
+            if not template_name: return jsonify({"error": "モードBではtemplate_nameが必要です"}), 400
+            
+            template_dict = AUTHOR_TEMPLATES if inspiration_genre == 'author' else FAMILIARITY_TEMPLATES
+            template_structure = template_dict.get(template_name)
+            if not template_structure: return jsonify({"error": "無効なtemplate_nameです"}), 400
+
+            # === フェーズ1: ツイートの初回ドラフト生成 ===
+            print("\n--- [AGENT_LOG]   Phase 1: Generating the first draft...")
+            phase1_prompt = f"""
+            {role_instruction}
+
+            ### あなたのタスク
+            以下の【思考の種】を、指定された【構成テンプレート】の骨格に沿って、説得力のあるツイートに再構成してください。
+            【思考の種】は、テンプレートのいずれかの要素（例：結論、問いかけ）として扱い、他の要素をあなたの言葉で補完して、一つの完成された物語に仕上げてください。
+
+            ### 思考の種
+            {inspiration_text}
+
+            ### 構成テンプレート
+            {template_structure}
+
+            ### 発信者のプロフィール（参考）
+            {owner_profile}
+            
+            ### ルール
+            - 全体を必ず140字以内に収めること。
+            - 完成したツイート本文のみを出力すること。
+            """
+            generation_config = genai_types.GenerateContentConfig(temperature=0.8)
+            first_draft_response = client.models.generate_content(model=model_id, contents=phase1_prompt, config=generation_config)
+            current_tweet_draft = first_draft_response.text.strip()
+            
+            # ★★★ 自己改善QCループ ★★★
+            MAX_REVISIONS = 100
+            PASSING_SCORE = 95
+            best_score = 0
+            best_tweet = current_tweet_draft
+
+            for i in range(MAX_REVISIONS):
+                print(f"\n--- [AGENT_LOG]   QC Loop - Iteration {i+1}/{MAX_REVISIONS} ---")
+                
+                print("--- [AGENT_LOG]     - Phase 2: Quality Check and Scoring...")
+                qc_prompt = f"""
+                あなたは、結果を出すことにこだわる、超一流のコンテンツ編集長です。
+                ライターが提出したツイート案が、読者の心に響き、アカウントの信頼性を高めるか厳しく採点してください。
+
+                ### 編集部の絶対憲法
+                1. **【具体性】:** 抽象論ではなく、具体的な言葉で語る。
+                2. **【簡潔さ】:** 140字以内で、一読で理解できる。
+                3. **【価値】:** 読者に「気づき」や「共感」を与える。
+                4. **【一貫性】:** 発信者のプロフィールと矛盾がない。
+
+                ### 評価対象ツイート
+                ```
+                {current_tweet_draft}
+                ```
+                ### 評価のための参考情報
+                - **元になった思考の種:** {inspiration_text}
+                - **使用した構成テンプレート:** {template_name}
+                - **発信者のプロフィール:** {owner_profile}
+
+                ### 指示
+                上記の憲法と参考情報を元に、ツイート案を100点満点で採点し、改善点を具体的にフィードバックしてください。
+
+                ### 出力形式 (JSONのみ)
+                ```json
+                {{
+                  "score": <合計点>,
+                  "feedback": "（もし{PASSING_SCORE}点未満なら具体的な改善点を記述。{PASSING_SCORE}点以上なら『合格』と記述）"
+                }}
+                ```
+                """
+                qc_response = client.models.generate_content(model=model_id, contents=qc_prompt)
+                
+                try:
+                    json_match = re.search(r'\{.*\}', qc_response.text, re.DOTALL)
+                    qc_result = json.loads(json_match.group(0))
+                    current_score = qc_result.get("score", 0)
+                    feedback = qc_result.get("feedback", "")
+                except Exception as e:
+                    print(f"!!! [AGENT_LOG] QC Loop failed to parse AI response: {e}. Breaking loop."); break
+                
+                print(f"--- [AGENT_LOG]     - QC Score: {current_score} / {PASSING_SCORE}")
+                print(f"--- [AGENT_LOG]     - QC Feedback: '{feedback}'")
+                
+                if current_score > best_score:
+                    best_score = current_score
+                    best_tweet = current_tweet_draft
+                if current_score >= PASSING_SCORE:
+                    print(f"--- [AGENT_LOG]     - QC Passed! Exiting loop.")
+                    break
+
+                if i < MAX_REVISIONS - 1:
+                    print("--- [AGENT_LOG]     - Phase 3: Revising the tweet...")
+                    revise_prompt = f"""
+                    あなたは、編集長からのフィードバックに基づき、ツイート案を改善するプロのライターです。
+                    ### 修正前のツイート案
+                    ```
+                    {current_tweet_draft}
+                    ```
+                    ### 編集長からの具体的な修正指示
+                    「{feedback}」
+                    ### あなたのタスク
+                    上記の指示に従って、ツイート案を改善してください。完成したツイート本文のみを出力してください。
+                    """
+                    revise_response = client.models.generate_content(model=model_id, contents=revise_prompt)
+                    current_tweet_draft = revise_response.text.strip()
+            
+            final_tweet = best_tweet
+        
+        else:
+            return jsonify({"error": "無効なtweet_modeです"}), 400
+
+        # --- 共通の最終処理 ---
+        if not final_tweet:
+            raise Exception("AIによるツイート生成に失敗しました。")
+
+        print("--- [AGENT_LOG] END: generate_tweet_from_inspiration (SUCCESS) ---")
+        return jsonify({"generated_tweet": final_tweet, "grounding_info": []}), 200
+
+    except Exception as e:
+        print(f"!!! CRITICAL EXCEPTION in generate_tweet_from_inspiration: {e}")
+        traceback.print_exc()
+        return jsonify({"message": "ツイートの生成中にエラーが発生しました。", "error": str(e)}), 500
+    
 # 悩み生成
-
 @app.route('/api/v1/problems/generate', methods=['POST'])
 @token_required
 def generate_problems():
@@ -2642,7 +2884,7 @@ def generate_problems():
         return jsonify({"message": "Gen AI Client is not initialized. Check API Key."}), 500
 
     print("\n" + "="*80)
-    print("--- [AGENT_LOG] START: generate_problems process (17 Hybrid Equations Method) ---")
+    print("--- [AGENT_LOG] START: generate_problems process (Full-Context Method) ---")
     print("="*80)
 
     user_id = g.user.id
@@ -2653,152 +2895,113 @@ def generate_problems():
         if not x_account_id:
             return jsonify({"error": "x_account_idは必須です"}), 400
 
-        # --- ペルソナ情報の収集 ---
-        account_strategy_res = supabase.table('account_strategies').select('main_target_audience').eq('x_account_id', x_account_id).eq('user_id', user_id).single().execute()
-        strategy_data = account_strategy_res.data
+        # --- アカウント戦略とペルソナ情報の取得 ---
+        # SQL(DDL)で定義されている通りのカラム名で必要な情報をすべて取得します
+        strategy_columns = 'main_target_audience, core_value_proposition, main_product_summary'
+        account_strategy_res = supabase.table('account_strategies').select(strategy_columns).eq('x_account_id', x_account_id).eq('user_id', user_id).single().execute()
         
-        target_persona_summary = "一般的なフォロワー"
+        if not account_strategy_res.data:
+            return jsonify({"error": "アカウント戦略データが見つかりません。先に戦略を設定してください。"}), 404
+        
+        strategy_data = account_strategy_res.data
+
+        # --- ペルソナ情報の整形 ---
+        target_persona_summary = "一般的なフォロワー" # デフォルト値
         main_target_audience_data = strategy_data.get('main_target_audience')
         if main_target_audience_data and isinstance(main_target_audience_data, list) and main_target_audience_data:
             first_persona = main_target_audience_data[0]
             if isinstance(first_persona, dict):
-                name = first_persona.get('name', '')
-                age = first_persona.get('age', '')
-                problem = first_persona.get('悩み', '')
+                name = first_persona.get('name', '未設定')
+                age = first_persona.get('age', '未設定')
+                problem = first_persona.get('悩み', '未設定')
                 target_persona_summary = f"ペルソナ「{name}」({age})の悩みは「{problem}」"
 
+        # --- アカウントの専門性（コンテキスト）情報の整形 ---
+        account_context_summary = "\n".join([
+            f"- **提供価値:** {strategy_data.get('core_value_proposition', '未設定')}",
+            f"- **関連製品/サービス:** {strategy_data.get('main_product_summary', '未設定')}"
+        ])
+        print(f"--- [AGENT_LOG]   - Account Context:\n{account_context_summary}")
+        
         user_profile = getattr(g, 'profile', {})
         model_id = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
-
-        # === フェーズ1: 17のハイブリッド方程式による悩みの発散的生成 ===
-        print("\n--- [AGENT_LOG] Phase 1: Divergent thinking with 17 Hybrid Equations...")
         
-        # 感情エンジン（12の葛藤方程式）
-        conflict_equations = [
-            "【理想 vs 現実】: [こうありたいという理想] がある。しかし [目を背けたい不甲斐ない現実] がある。",
-            "【義務 vs 欲望】: [やるべきこと（理性）] は分かっている。しかし [楽をしたいという誘惑（本能）] に勝てない。",
-            "【過去の栄光 vs 現在の停滞】: [過去はこうだったという輝かしい記憶] がある。しかし [それに比べて今の自分は停滞している] という焦りがある。",
-            "【挑戦への希望 vs 失敗への恐怖】: [新しいことに挑戦したいという希望] がある。しかし [過去の失敗体験や、未知への恐怖] が足を引っ張る。",
-            "【承認欲求 vs 他者からの無理解】: [特定の人に認められたい] と願う。しかし [その人からは心ない言葉や無関心な態度] を示される。",
-            "【自己主張 vs 関係性の悪化リスク】: [自分の本音を主張したい]。しかし [それを言うことで、相手との関係が悪化するのが怖い]。",
-            "【優越感への渇望 vs 他者との比較による劣等感】: [他人より優位に立ちたい] という欲求がある。しかし [キラキラした他人と自分を比べて] 劣等感を抱いている。",
-            "【時間の有限性 vs 無限の選択肢】: [人生の時間は限られているという焦り] がある。しかし [世の中には情報や選択肢が溢れすぎていて]、何から手をつければいいか分からない。",
-            "【経済的自由への憧れ vs 社会的制約】: [もっと自由にお金を使いたいという憧れ] がある。しかし [扶養、税金などの社会的制約] に縛られている。",
-            "【個人の成長意欲 vs 環境の変化】: [自分は成長したいと強く願っている]。しかし [自分ではコントロールできない環境の変化] に対応せざるを得ない。",
-            "【正当な情報への渇望 vs 信頼できない情報源】: [本当に信頼できる情報が知りたい]。しかし [ネット上には怪しい儲け話や、自分とはかけ離れた成功談ばかり] で何を選べばいいか分からない。",
-            "【未来への希望 vs 過去への後悔】: [こうすれば未来は変えられるかもしれないという希望]。しかし [『あの時ああしていれば…』という過去への後悔] が、新しい一歩を躊躇させる。"
+        TOTAL_PROBLEMS = 50
+        ACTION_BASED_RATIO = 0.8
+        NUM_ACTION_BASED = int(TOTAL_PROBLEMS * ACTION_BASED_RATIO)
+        NUM_EMOTIONAL_BASED = TOTAL_PROBLEMS - NUM_ACTION_BASED
+
+        conflict_equations_list = [
+            "【理想 vs 現実】", "【義務 vs 欲望】", "【過去の栄光 vs 現在の停滞】", "【挑戦への希望 vs 失敗への恐怖】",
+            "【承認欲求 vs 無理解】", "【自己主張 vs 関係悪化リスク】", "【優越感 vs 劣等感】", "【時間の有限性 vs 無限の選択肢】",
+            "【経済的自由 vs 社会的制約】", "【成長意欲 vs 環境の変化】", "【情報への渇望 vs 不信】", "【未来への希望 vs 過去への後悔】"
         ]
 
-        # 行動エンジン（5つのアクション方程式）
-        action_equations = [
-            "【目標設定の壁】: [〇〇したい]という願望はあるが、[具体的な目標（何を・いつまでに・どのくらい）]に落とし込めず、行動が始まらない。",
-            "【情報収集の壁】: [〇〇を学ぶため]に情報を集めているが、[特定の情報（どの本、どのサイト、どのツール）]が信頼できるか分からず、立ち往生している。",
-            "【学習・実践の壁】: [〇〇をやってみた]が、[具体的なエラーや問題（××ができない、△△でつまずく）]にぶつかり、解決できずに挫折しそう。",
-            "【継続・習慣化の壁】: [〇〇を続ける]と決めたのに、[具体的な障害（急な残業、子供の夜泣き）]によって計画が崩れ、自己嫌悪に陥る。",
-            "【収益化・応用の壁】: [〇〇のスキル]は少し身についたが、[それをどうやってお金に変えるか（営業方法、価格設定）]が全く分からず、宝の持ち腐れになっている。"
-        ]
-
-        # 全ての方程式を結合
-        all_equations = conflict_equations + action_equations
-        
-        mindmap_prompt = "\n".join([
-            "あなたは、人間の深層心理と行動原理を深く理解し、それを心を揺さぶる言葉に変換するプロのコピーライター兼マーケティング戦略家です。",
-            "あなたの仕事は、指定されたペルソナが抱えるであろう「葛藤」や「行動の壁」を、多様な切り口から、具体的で共感を呼ぶ「悩み」として言語化することです。\n",
-            "## あなたが思考の前提とする情報",
-            f"- **ペルソナ:** {target_persona_summary}\n",
-            "## ★★★ あなたが実行すべき思考法：17のハイブリッド方程式 ★★★",
-            "以下の**17個の『方程式』**のそれぞれを思考の起点としてください。",
-            "各方程式の[ ]の中身をペルソナの状況に合わせて埋めることで、具体的な悩みを**それぞれ3個ずつ**、合計で約50個生成してください。\n",
-            "### 17の方程式（感情エンジン + 行動エンジン）",
-            "\n".join(f"- {eq}" for eq in all_equations),
-            "\n## 指示",
-            "上記の思考法を用いて、合計約50個の具体的な悩みを生成し、以下のJSON形式で出力してください。",
-            "**『感情的な悩み』と『行動に直結する悩み』がバランス良く含まれるように**、リスト全体を構成してください。",
-            "生成する悩みは、読者が『これ、私のことだ…』と強く共感するような、具体的で生々しい言葉で記述してください。\n",
-            "## 最終的な出力形式",
+        # --- AIへのプロンプトにアカウントの専門性情報を追加 ---
+        main_prompt = "\n".join([
+            "あなたは、指定された専門分野における顧客の深層心理と行動原理を深く理解し、それを心を揺さぶる言葉に変換するプロのマーケティング戦略家です。",
+            "あなたの仕事は、以下の『私のアカウント情報』と『ペルソナ情報』を基に、具体的で共感を呼ぶ「悩み」のリストを生成することです。\n",
+            "## ★★★ あなたが思考の前提とする最重要情報 ★★★\n",
+            "### 1. 私のアカウント情報（悩みを解決する側の専門分野）",
+            account_context_summary,
+            "\n### 2. ペルソナ情報（悩みを抱えている側の人物像）",
+            f"- {target_persona_summary}\n",
+            "## ★★★ あなたが実行すべき思考プロセス ★★★",
+            "『私のアカウント情報』で定義された専門分野の範囲内で、ペルソナが抱えるであろう悩みを生成してください。\n",
+            f"### ステップ1: 『行動ベースの悩み』の生成 ({NUM_ACTION_BASED}個)",
+            "1.  まず、ペルソナが専門分野で成功するために**『やるべき具体的なタスク』**を内部的に複数想定します。（例: 競合リサーチ、コンテンツ作成、リスト作成など）",
+            "2.  次に、その各タスクを実行する際に初心者が**具体的に『つまずくポイント（壁）』**を発想します。",
+            "3.  最後に、その『壁』を読者の心に突き刺さる**『悩みのキャッチコピー』**に変換します。このプロセスで40個生成してください。\n",
+            f"### ステップ2: 『感情ベースの悩み』の生成 ({NUM_EMOTIONAL_BASED}個)",
+            f"以下の**『12の葛藤方程式』**をヒントに、ペルソナの内面的な葛藤を表現する悩みを10個生成してください。\n",
+            "**12の葛藤方程式リスト:** " + ", ".join(conflict_equations_list),
+            "\n## ★★★ 厳守すべきルール ★★★",
+            f"1. **比率の厳守:** 必ず『行動ベース』を{NUM_ACTION_BASED}個、『感情ベース』を{NUM_EMOTIONAL_BASED}個生成してください。",
+            "2. **高品質:** 生成する悩みは、抽象的でなく、具体的で、読者が『これ、私のことだ…』と強く共感する生々しい言葉で記述してください。",
+            "3. **非重複:** リスト内で、本質的に同じ悩みが重複しないように注意してください。\n",
+            "## 最終的な出力形式 (JSONのみ)",
             "```json",
             "{",
             '  "generated_problems": [',
-            '    { "equation_type": "理想 vs 現実", "problem_text": "（この方程式から生まれた悩み1）" },',
-            '    { "equation_type": "目標設定の壁", "problem_text": "（この方程式から生まれた悩み2）" },',
+            '    { "equation_type": "行動の壁: (関連タスク名)", "problem_text": "（行動ベースの悩み1）" },',
+            '    { "equation_type": "感情の葛藤: (方程式名)", "problem_text": "（感情ベースの悩み1）" },',
             "    ...",
-            '    { "equation_type": "収益化・応用の壁", "problem_text": "（この方程式から生まれた悩み51）" }',
+            f'    {{ "equation_type": "...", "problem_text": "（50個目の悩み）" }}',
             "  ]",
             "}",
             "```",
             "JSON以外の説明文は、一切含めないでください。"
         ])
-
-        generation_config = genai_types.GenerateContentConfig(temperature=0.95) # 多様性を最大化
-        response = client.models.generate_content(model=model_id, contents=mindmap_prompt, config=generation_config)
         
+        print("\n--- [AGENT_LOG] 2. Generating 50 problems in a single shot...")
+        
+        generation_config = genai_types.GenerateContentConfig(temperature=0.95)
+        response = client.models.generate_content(model=model_id, contents=main_prompt, config=generation_config)
+        
+        print("--- [AGENT_LOG] 3. Parsing AI response...")
         try:
             json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
-            if not json_match: raise json.JSONDecodeError("No JSON object found.", response.text, 0)
-            initial_problems = json.loads(json_match.group(0)).get("generated_problems", [])
+            if not json_match:
+                raise json.JSONDecodeError("No JSON object found in the response.", response.text, 0)
+            generated_data = json.loads(json_match.group(0))
+            final_problems = generated_data.get("generated_problems", [])
         except (json.JSONDecodeError, KeyError) as e:
-            raise Exception(f"Phase 1 failed to parse AI response: {e}")
+            raise Exception(f"Failed to parse AI response: {e}")
 
-        print(f"--- [AGENT_LOG]   - Generated {len(initial_problems)} draft problems.")
+        if len(final_problems) == 0:
+            raise Exception("AI returned an empty list of problems.")
+
+        print(f"--- [AGENT_LOG]   - Generated {len(final_problems)} problems.")
+
         
-        # === フェーズ2 & 3: QCと修正のループ ===
-        MAX_REVISIONS = 2
-        best_problems = initial_problems
-
-        for i in range(MAX_REVISIONS):
-            print(f"\n--- [AGENT_LOG] Problem QC Loop - Iteration {i+1}/{MAX_REVISIONS} ---")
-            
-            qc_prompt = "\n".join([
-                "あなたは、読者の心を一瞬で掴む言葉を見つけ出すのが得意な、超一流の編集長です。",
-                "コピーライターが提出した『悩みのドラフトリスト』を評価し、品質が低いものを指摘・修正してください。\n",
-                "## 品質の低い悩みの定義",
-                "- **抽象的すぎる:** 『〇〇について知りたい』のような、誰にでも当てはまる漠然とした悩み。",
-                "- **行動に繋がらない:** 感情の吐露だけで終わり、『じゃあ、どうすれば？』という具体的な行動課題が見えない悩み。",
-                "- **重複している:** リスト内に、本質的に同じ悩みが複数含まれている。\n",
-                "## ドラフトリスト",
-                "```json",
-                json.dumps(best_problems, indent=2, ensure_ascii=False),
-                "```\n",
-                "## 指示",
-                f"1. **評価:** リストに品質の低い悩みが含まれていないか、また、重複がないか、悩みの総数が50個に満たない場合は、その旨を指摘してください。",
-                "2. **フィードバック:** もし改善点がある場合、具体的な修正指示を出してください。修正指示がない場合は、`feedback`は`'合格'`としてください。",
-                "3. **修正:** フィードバックに基づき、リスト全体を修正・再生成し、必ず50個の**重複がなく、それぞれが『感情』と『行動』の両面で鋭い言葉で表現された高品質な悩み**のリストにしてください。\n",
-                "## 出力形式",
-                "```json",
-                '{',
-                '  "feedback": "（具体的な改善指示、または『合格』）",',
-                '  "revised_problems": [ ... ]',
-                '}',
-                "```"
-            ])
-
-            qc_response = client.models.generate_content(model=model_id, contents=qc_prompt)
-            
-            try:
-                json_match = re.search(r'\{.*\}', qc_response.text, re.DOTALL)
-                if not json_match: raise json.JSONDecodeError("No JSON object found.", qc_response.text, 0)
-                qc_result = json.loads(json_match.group(0))
-                feedback = qc_result.get("feedback", "")
-                revised_problems = qc_result.get("revised_problems", [])
-            except (json.JSONDecodeError, KeyError) as e:
-                print(f"!!! [AGENT_LOG] Problem QC Loop failed to parse AI response: {e}. Breaking loop."); break
-            
-            print(f"--- [AGENT_LOG]   - QC Feedback:\n'''\n{feedback}\n'''")
-            best_problems = revised_problems
-            
-            if feedback == '合格':
-                print(f"--- [AGENT_LOG]   - QC Passed! Exiting loop.")
-                break
+        print(f"\n--- [AGENT_LOG] 4. Finalizing {len(final_problems)} problems to return to frontend...")
+        final_problems_for_frontend = [{"problem_text": p.get("problem_text"), "pain_point": p.get("equation_type", "不明")} for p in final_problems]
         
-        # === 最終出力 ===
-        print(f"\n--- [AGENT_LOG] 4. Finalizing {len(best_problems)} problems to return to frontend...")
-        final_problems_for_frontend = [{"problem_text": p.get("problem_text"), "pain_point": p.get("equation_type", "不明")} for p in best_problems]
         return jsonify({"generated_problems": final_problems_for_frontend}), 200
 
     except Exception as e:
         print(f"!!! [AGENT_LOG] CRITICAL EXCEPTION in generate_problems: {e}"); traceback.print_exc()
         return jsonify({"message": "悩みリストの生成中にエラーが発生しました。", "error": str(e)}), 500
-
 
 # フロントエンドから悩みリストを保存
 
@@ -2906,7 +3109,218 @@ def delete_problems():
         return jsonify({"message": "悩みの削除中にエラーが発生しました。", "error": str(e)}), 500
 
 
+# --- インスピレーション生成API ---
+@app.route('/api/v1/inspirations/generate', methods=['POST', 'OPTIONS'])
+@token_required
+def generate_post_inspirations():
+    # CORSプリフライトリクエストは、トークン検証などを行わずにここで処理を終了させます。
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
 
+    global client
+    if not client:
+        return jsonify({"message": "Gen AI Client is not initialized."}), 500
+
+    print("\n" + "="*80)
+    print("--- [AGENT_LOG] START: generate_post_inspirations ---")
+    
+    try:
+        # --- 1. リクエストから必須情報を受け取る ---
+        data = request.json
+        x_account_id = data.get('x_account_id')
+        genre = data.get('genre')  # 'persona', 'author', 'familiarity' のいずれか
+
+        if not all([x_account_id, genre]):
+            return jsonify({"error": "x_account_idとgenreは必須です"}), 400
+        
+        print(f"--- [AGENT_LOG]   - Genre: {genre}, X Account ID: {x_account_id}")
+
+        # --- 2. データベースからアカウント戦略情報を取得 ---
+        strategy_res = supabase.table('account_strategies').select('*').eq('x_account_id', x_account_id).maybe_single().execute()
+        
+        if not strategy_res.data:
+            return jsonify({"error": "アカウント戦略データが見つかりません。先に戦略を設定してください。"}), 404
+        
+        strategy_data = strategy_res.data
+
+        # --- 3. ジャンルに応じてAIに渡すプロファイルと指示を組み立てる ---
+        main_profile = ""
+        supplementary_info = ""
+        framework_instruction = ""
+        
+        supplementary_info = f"""
+        - 提供価値: {strategy_data.get('core_value_proposition', '未設定')}
+        - 関連製品: {strategy_data.get('main_product_summary', '未設定')}
+        """
+
+        if genre == 'persona':
+            main_profile = strategy_data.get('persona_profile_for_ai', '一般的なフォロワーの悩み')
+            role_instruction = "あなたは、以下の【ペルソナのプロフィール】を深く理解し、その人物が抱えるであろう具体的な悩みを言語化するプロのマーケティングリサーチャーです。"
+            profile_header = "【最重要】ペルソナのプロフィール"
+            framework_instruction = """
+            ### あなたが実行すべき思考プロセス
+            上記のプロフィールを持つ人物が抱えるであろう悩みを、『行動ベースの悩み』と『感情ベースの悩み』に分けて、合計50個生成してください。
+            - **行動ベースの悩み (40個):** 目標設定、情報収集、学習、実践、継続、収益化など、具体的なアクションでつまずくポイントを言語化します。
+            - **感情ベースの悩み (10個):** 理想と現実のギャップ、他者との比較による劣等感、将来への不安など、内面的な葛藤を言語化します。
+            """
+
+        elif genre == 'author' or genre == 'familiarity':
+            main_profile = strategy_data.get('persona_profile_for_ai', '（発信者のプロフィール情報が未設定です）')
+            role_instruction = "あなたは、プロのコンテンツ戦略家です。あなたの仕事は、以下の【発信者のプロフィール】を深く理解し、その人物が発信すべき投稿の元ネタとなる「思考の種」を量産することです。"
+            profile_header = "【最重要】発信者のプロフィール"
+            framework_instruction = f"""
+            ### あなたが実行すべき思考プロセス
+            上記のプロフィールを持つ人物になりきり、以下の**【{genre.upper()}】**カテゴリーの「思考の種」を、合計で30個生成してください。
+
+            **【{genre.upper()}カテゴリーの定義】**
+            - **AUTHOR (権威性):** 専門性や経験の深さを示すための「持論」「業界への問いかけ」「過去のプロジェクトからの教訓」を生成します。
+            - **FAMILIARITY (親近感):** 人間味を感じてもらうための「日々の小さな失敗」「フリーランスあるある」「本音のつぶやき」を生成します。
+            """
+        else:
+            return jsonify({"error": "無効なgenreが指定されました"}), 400
+
+        # --- 4. 最終的なプロンプトを組み立てる ---
+        main_prompt = f"""
+        ### あなたの役割
+        {role_instruction}
+        ---
+        ### {profile_header}
+        {main_profile}
+        ---
+        ### 思考のヒント（補助情報）
+        以下の情報は、事業に関する補足情報です。生成するネタが、これらの情報と大きく矛盾しないように注意してください。ただし、すべての情報を無理に使う必要はありません。
+        {supplementary_info}
+        {framework_instruction}
+        ### 出力形式
+        生成したネタを、以下のJSON形式で出力してください。説明文は不要です。
+        ```json
+        {{
+          "inspirations": [
+            {{ "type": "（悩みの種類やネタの型）", "text": "（生成されたテキスト1）" }},
+            {{ "type": "（悩みの種類やネタの型）", "text": "（生成されたテキスト2）" }},
+            ...
+          ]
+        }}
+        ```
+        """
+        
+        # --- 5. AIを呼び出し、レスポンスを処理する ---
+        print("--- [AGENT_LOG]   - Sending request to Gen AI...")
+        user_profile = getattr(g, 'profile', {})
+        model_id = user_profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
+        response = client.models.generate_content(model=model_id, contents=main_prompt)
+        
+        print("--- [AGENT_LOG]   - Parsing AI response...")
+        json_match = re.search(r'\{.*\}', response.text, re.DOTALL)
+        if not json_match:
+            print(f"!!! AI response did not contain valid JSON. Raw response:\n{response.text}")
+            raise Exception("AIからの応答がJSON形式ではありません。")
+        
+        result = json.loads(json_match.group(0))
+        inspirations = result.get("inspirations", [])
+        
+        for item in inspirations:
+            if 'problem_text' in item: item['text'] = item.pop('problem_text')
+            if 'pain_point' in item: item['type'] = item.pop('pain_point')
+            item['genre'] = genre
+
+        print(f"--- [AGENT_LOG] END: generate_post_inspirations. Generated {len(inspirations)} items.")
+        return jsonify({"generated_inspirations": inspirations}), 200
+
+    except Exception as e:
+        print(f"!!! CRITICAL EXCEPTION in generate_post_inspirations: {e}")
+        traceback.print_exc()
+        return jsonify({"message": "投稿ネタの生成中にエラーが発生しました。", "error": str(e)}), 500
+# --- 2. インスピレーション取得・保存・削除API ---
+@app.route('/api/v1/inspirations', methods=['GET', 'POST', 'DELETE', 'OPTIONS'])
+@token_required
+def handle_inspirations():
+    user_id = g.user.id
+    
+    # --- GET: 保存済みインスピレーションのリストを取得 ---
+    if request.method == 'GET':
+        x_account_id = request.args.get('x_account_id')
+        genre = request.args.get('genre') # 'author' or 'familiarity'
+        
+        if not x_account_id or not genre:
+            return jsonify({"error": "x_account_idとgenreはクエリパラメータに必須です"}), 400
+
+        print(f"--- [AGENT_LOG] GET /inspirations for genre: {genre}, x_account_id: {x_account_id} ---")
+        try:
+            query = supabase.table('inspirations').select('*').eq('user_id', user_id).eq('x_account_id', x_account_id).eq('genre', genre).order('created_at', desc=True)
+            result = query.execute()
+            return jsonify(result.data), 200
+        except Exception as e:
+            print(f"!!! EXCEPTION in GET /inspirations: {e}")
+            traceback.print_exc()
+            return jsonify({"message": "インスピレーションリストの取得中にエラーが発生しました。", "error": str(e)}), 500
+
+    # --- POST: 複数のインスピレーションをDBに保存 ---
+    if request.method == 'POST':
+        try:
+            data = request.json
+            x_account_id = data.get('x_account_id')
+            inspirations_to_save = data.get('inspirations_to_save') # フロントから送られてくるリスト
+
+            if not x_account_id or not inspirations_to_save:
+                return jsonify({"error": "x_account_idとinspirations_to_saveは必須です"}), 400
+            
+            print(f"--- [AGENT_LOG] POST /inspirations: Saving {len(inspirations_to_save)} items... ---")
+
+            records_to_insert = []
+            for item in inspirations_to_save:
+                records_to_insert.append({
+                    'user_id': user_id,
+                    'x_account_id': x_account_id,
+                    'text': item.get('text'),
+                    'genre': item.get('genre'),
+                    'type': item.get('type'),
+                    'status': 'draft' # デフォルトステータス
+                })
+            
+            # Supabaseに一括で挿入
+            result = supabase.table('inspirations').insert(records_to_insert).execute()
+
+            # エラーチェック（Supabase v2の書き方）
+            if hasattr(result, 'error') and result.error:
+                raise Exception(result.error)
+
+            return jsonify({"message": f"{len(records_to_insert)}件のインスピレーションを保存しました。"}), 201
+
+        except Exception as e:
+            print(f"!!! EXCEPTION in POST /inspirations: {e}")
+            traceback.print_exc()
+            return jsonify({"message": "インスピレーションの保存中にエラーが発生しました。", "error": str(e)}), 500
+    
+    # --- DELETE: 複数のインスピレーションをIDで削除 ---
+    if request.method == 'DELETE':
+        try:
+            data = request.json
+            inspiration_ids = data.get('inspiration_ids') # 削除するIDのリスト
+
+            if not inspiration_ids or not isinstance(inspiration_ids, list):
+                return jsonify({"error": "inspiration_ids (リスト形式) は必須です"}), 400
+            
+            print(f"--- [AGENT_LOG] DELETE /inspirations: Deleting {len(inspiration_ids)} items... ---")
+
+            # 自分のIDに一致するものだけを削除
+            result = supabase.table('inspirations').delete().eq('user_id', user_id).in_('id', inspiration_ids).execute()
+
+            if hasattr(result, 'error') and result.error:
+                raise Exception(result.error)
+
+            return jsonify({"message": f"{len(inspiration_ids)}件のインスピレーションを削除しました。"}), 200
+
+        except Exception as e:
+            print(f"!!! EXCEPTION in DELETE /inspirations: {e}")
+            traceback.print_exc()
+            return jsonify({"message": "インスピレーションの削除中にエラーが発生しました。", "error": str(e)}), 500
+
+    # OPTIONSリクエストへの対応 (CORSプリフライト用)
+    if request.method == 'OPTIONS':
+        return jsonify({"status": "ok"}), 200
+
+    return jsonify({"error": "Method not allowed"}), 405
 
 # Flaskサーバーの起動
 if __name__ == '__main__':
