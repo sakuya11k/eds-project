@@ -1744,9 +1744,13 @@ def save_tweet_draft():
     except Exception as e:
         print(f"!!! Tweet draft save exception: {e}"); traceback.print_exc()
         return jsonify({"message": "ツイートの保存中にエラーが発生しました", "error": str(e)}), 500
+    
+    
+    
+
+
 
 # --- ★ ここから予約投稿実行APIを追加 ★ ---
-
 @app.route('/api/v1/tweets/execute-scheduled', methods=['POST'])
 @app.route('/api/v1/tweets/execute-scheduled/', methods=['POST'])
 def execute_scheduled_tweets():
@@ -1766,9 +1770,9 @@ def execute_scheduled_tweets():
     try:
         now_utc_str = datetime.datetime.now(datetime.timezone.utc).isoformat()
         
-        # x_accountsテーブルをJOINして認証情報を取得
+        # ★★★ 変更点1: SELECTに tweet_type と original_tweet_id を追加 ★★★
         scheduled_tweets_res = supabase.table('tweets').select(
-            '*, x_account:x_account_id(*)'
+            '*, tweet_type, original_tweet_id, x_account:x_account_id(*)'
         ).eq('status', 'scheduled').lte('scheduled_at', now_utc_str).execute()
 
         if hasattr(scheduled_tweets_res, 'error') and scheduled_tweets_res.error:
@@ -1784,8 +1788,12 @@ def execute_scheduled_tweets():
         for tweet_data in tweets_to_process:
             tweet_id = tweet_data.get('id')
             content = tweet_data.get('content')
-            image_urls = tweet_data.get('image_urls', []) # 画像URLリストを取得
+            image_urls = tweet_data.get('image_urls', [])
             x_account_data = tweet_data.get('x_account')
+            
+            # ★★★ 変更点2: ツイートの種類と元のIDを取得 ★★★
+            tweet_type = tweet_data.get('tweet_type', 'normal')
+            original_tweet_id = tweet_data.get('original_tweet_id')
 
             if not x_account_data:
                 error_msg = f"X Account data not found for tweet ID {tweet_id}."
@@ -1795,7 +1803,6 @@ def execute_scheduled_tweets():
                 continue
 
             try:
-                # 認証情報を復号
                 api_key = EncryptionManager.decrypt(x_account_data.get('api_key_encrypted'))
                 api_key_secret = EncryptionManager.decrypt(x_account_data.get('api_key_secret_encrypted'))
                 access_token = EncryptionManager.decrypt(x_account_data.get('access_token_encrypted'))
@@ -1804,56 +1811,58 @@ def execute_scheduled_tweets():
                 if not all([api_key, api_key_secret, access_token, access_token_secret]):
                     raise ValueError("X API credentials incomplete in the x_accounts table.")
 
-                # ▼▼▼【メディアアップロード処理】▼▼▼
                 media_ids = []
                 if image_urls and isinstance(image_urls, list):
-                    # メディアアップロードにはv1.1のAPIクライアントが必要
+                    import tempfile # ここでインポート
                     auth_v1 = tweepy.OAuth1UserHandler(api_key, api_key_secret, access_token, access_token_secret)
                     api_v1 = tweepy.API(auth_v1)
                     
-                    for url in image_urls[:4]: # Twitter APIは最大4枚まで
+                    for url in image_urls[:4]:
                         tmp_filename = None
                         try:
-                            # URLから画像をダウンロードして一時ファイルに保存
                             response = requests.get(url, stream=True)
                             response.raise_for_status()
                             with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp:
                                 tmp.write(response.content)
                                 tmp_filename = tmp.name
                             
-                            # 一時ファイルをアップロード
                             print(f"--- Uploading media for tweet {tweet_id} from {url}...")
                             media = api_v1.media_upload(filename=tmp_filename)
                             media_ids.append(media.media_id_string)
                             print(f"--- Media uploaded, media_id: {media.media_id_string}")
 
                         finally:
-                            # 一時ファイルを削除
                             if tmp_filename and os.path.exists(tmp_filename):
                                 os.remove(tmp_filename)
                 
-
-                # ツイート投稿にはv2のAPIクライアントを使用
                 client_v2 = tweepy.Client(
                     consumer_key=api_key, consumer_secret=api_key_secret,
                     access_token=access_token, access_token_secret=access_token_secret
                 )
                 
-                # メディアIDを付けてツイート
-                created_x_tweet_response = client_v2.create_tweet(
-                    text=content,
-                    media_ids=media_ids if media_ids else None
-                )
+                # ★★★ 変更点3: create_tweetのペイロードを動的に作成 ★★★
+                payload = {"text": content}
+                if media_ids:
+                    payload["media_ids"] = media_ids
+
+                if tweet_type == 'reply' and original_tweet_id:
+                    payload["reply"] = {"in_reply_to_tweet_id": original_tweet_id}
+                    print(f"--- Posting tweet {tweet_id} as a REPLY to {original_tweet_id}")
+                
+                elif tweet_type == 'quote' and original_tweet_id:
+                    payload["quote_tweet_id"] = original_tweet_id
+                    print(f"--- Posting tweet {tweet_id} as a QUOTE of {original_tweet_id}")
+                
+                # create_tweetにペイロードを展開して渡す
+                created_x_tweet_response = client_v2.create_tweet(**payload)
                 x_tweet_id_str = created_x_tweet_response.data.get('id')
                 
-                # 成功時のDB更新
                 update_payload = {"status": "posted", "posted_at": now_utc_str, "x_tweet_id": x_tweet_id_str, "error_message": None}
                 supabase.table('tweets').update(update_payload).eq('id', tweet_id).execute()
                 successful_posts += 1
                 processed_tweets.append({"id": tweet_id, "status": "posted", "x_tweet_id": x_tweet_id_str})
 
             except Exception as e_post:
-                # 投稿失敗時のDB更新
                 error_message = f"Post Error: {str(e_post)}"
                 print(f"!!! Error posting tweet ID {tweet_id}: {error_message}")
                 traceback.print_exc()
@@ -1873,8 +1882,6 @@ def execute_scheduled_tweets():
         print(f"!!! Major exception in execute_scheduled_tweets: {e}")
         traceback.print_exc()
         return jsonify({"message": "An unexpected error occurred during scheduled tweet processing.", "error": str(e)}), 500
-
-
 
 # ツイート一覧を取得
 @app.route('/api/v1/tweets', methods=['GET'])
@@ -2003,39 +2010,77 @@ def delete_tweet(tweet_id):
         error_message = str(e.args[0]) if e.args else str(e)
         return jsonify({"error": "Failed to delete tweet", "details": error_message}), 500
 
-# ツイートを即時投稿する
+# ツイートを即時投稿
 @app.route('/api/v1/tweets/<uuid:tweet_id>/post-now', methods=['POST'])
 @token_required
 def post_tweet_now_api(tweet_id):
     user_id = g.user.id
     try:
-        # 1. ツイート情報と、それに紐づくXアカウント情報をJOINして取得
-        tweet_res = supabase.table('tweets').select('*, x_account:x_account_id(*)').eq('id', tweet_id).eq('user_id', user_id).single().execute()
+        # tweet_type と original_tweet_id もSELECTに含める
+        tweet_res = supabase.table('tweets').select(
+            '*, tweet_type, original_tweet_id, x_account:x_account_id(*)'
+        ).eq('id', tweet_id).eq('user_id', user_id).single().execute()
+        
+        if not tweet_res.data: 
+            return jsonify({"error": "Tweet not found or access denied"}), 404
+        
         tweet_data = tweet_res.data
-        
-        if not tweet_data: return jsonify({"error": "Tweet not found"}), 404
-        
         content = tweet_data.get('content')
         image_urls = tweet_data.get('image_urls', [])
         x_account_data = tweet_data.get('x_account')
 
-        if not x_account_data: return jsonify({"error": "X Account credentials for this tweet not found"}), 404
+        tweet_type = tweet_data.get('tweet_type', 'normal')
+        original_tweet_id = tweet_data.get('original_tweet_id')
 
-        # 2. 認証情報を復号
-        api_key = EncryptionManager.decrypt(x_account_data.get('api_key_encrypted'))
-        api_key_secret = EncryptionManager.decrypt(x_account_data.get('api_key_secret_encrypted'))
-        access_token = EncryptionManager.decrypt(x_account_data.get('access_token_encrypted'))
-        access_token_secret = EncryptionManager.decrypt(x_account_data.get('access_token_secret_encrypted'))
+        if not x_account_data: 
+            return jsonify({"error": "X Account credentials for this tweet not found"}), 404
 
+        # =============================================================
+        # ▼▼▼【ここからデバッグログ】▼▼▼
+        # =============================================================
+        print("\n" + "*"*20 + " DEBUGGING TWEET POST (POST NOW) " + "*"*20)
+        print(f"* Tweet ID: {tweet_id}")
+        
+        # 1. DBから取得した暗号化データが正しいか確認
+        raw_api_key = x_account_data.get('api_key_encrypted')
+        raw_api_key_secret = x_account_data.get('api_key_secret_encrypted')
+        raw_access_token = x_account_data.get('access_token_encrypted')
+        raw_access_token_secret = x_account_data.get('access_token_secret_encrypted')
+
+        print(f"* Raw Encrypted API Key from DB (first 10 chars): {raw_api_key[:10] if raw_api_key else 'NOT FOUND'}")
+        print(f"* Raw Encrypted API Key Secret from DB (first 10 chars): {raw_api_key_secret[:10] if raw_api_key_secret else 'NOT FOUND'}")
+        print(f"* Raw Encrypted Access Token from DB (first 10 chars): {raw_access_token[:10] if raw_access_token else 'NOT FOUND'}")
+        print(f"* Raw Encrypted Access Token Secret from DB (first 10 chars): {raw_access_token_secret[:10] if raw_access_token_secret else 'NOT FOUND'}")
+        
+        # 復号処理
+        api_key = EncryptionManager.decrypt(raw_api_key)
+        api_key_secret = EncryptionManager.decrypt(raw_api_key_secret)
+        access_token = EncryptionManager.decrypt(raw_access_token)
+        access_token_secret = EncryptionManager.decrypt(raw_access_token_secret)
+
+        # 2. 復号後のデータが正しいか確認（キー全体は表示せず安全性を確保）
+        print(f"* Decrypted API Key (first 5 / last 5): '{api_key[:5] if api_key else 'EMPTY'}...{api_key[-5:] if api_key else 'EMPTY'}'")
+        print(f"* Decrypted API Key Secret (first 5 / last 5): '{api_key_secret[:5] if api_key_secret else 'EMPTY'}...{api_key_secret[-5:] if api_key_secret else 'EMPTY'}'")
+        print(f"* Decrypted Access Token (first 5 / last 5): '{access_token[:5] if access_token else 'EMPTY'}...{access_token[-5:] if access_token else 'EMPTY'}'")
+        print(f"* Decrypted Access Token Secret (first 5 / last 5): '{access_token_secret[:5] if access_token_secret else 'EMPTY'}...{access_token_secret[-5:] if access_token_secret else 'EMPTY'}'")
+        
+        # 3. 認証情報が空でないか最終チェック
         if not all([api_key, api_key_secret, access_token, access_token_secret]):
-            return jsonify({"error": "X API credentials are not fully configured for this account"}), 500
+            print("!!! CRITICAL DEBUG: One of the decrypted keys is EMPTY. Halting post.")
+            raise ValueError("Decrypted credentials are incomplete. Check ENCRYPTION_KEY or DB data.")
+        
+        print("* All keys seem valid. Proceeding to Tweepy.")
+        print("*"*60 + "\n")
+        # =============================================================
+        # ▲▲▲【ここまでデバッグログ】▲▲▲
+        # =============================================================
 
-        # 3. Tweepyクライアント初期化
+        # Tweepyクライアント初期化
         client_v2 = tweepy.Client(consumer_key=api_key, consumer_secret=api_key_secret, access_token=access_token, access_token_secret=access_token_secret)
         auth_v1 = tweepy.OAuth1UserHandler(api_key, api_key_secret, access_token, access_token_secret)
         api_v1 = tweepy.API(auth_v1)
 
-        # 4. メディアアップロード処理
+        # メディアアップロード処理
         media_ids = []
         if image_urls:
             import requests, tempfile, os
@@ -2052,11 +2097,24 @@ def post_tweet_now_api(tweet_id):
                 finally:
                     if tmp_filename and os.path.exists(tmp_filename): os.remove(tmp_filename)
         
-        # 5. ツイート投稿
-        created_x_tweet = client_v2.create_tweet(text=content, media_ids=media_ids if media_ids else None)
+        # ツイート投稿ペイロードを動的に作成
+        payload = {"text": content}
+        if media_ids:
+            payload["media_ids"] = media_ids
+        
+        if tweet_type == 'reply' and original_tweet_id:
+            payload["reply"] = {"in_reply_to_tweet_id": original_tweet_id}
+            print(f"--- Posting tweet {tweet_id} as a REPLY to {original_tweet_id}")
+
+        elif tweet_type == 'quote' and original_tweet_id:
+            payload["quote_tweet_id"] = original_tweet_id
+            print(f"--- Posting tweet {tweet_id} as a QUOTE of {original_tweet_id}")
+
+        # ツイート投稿
+        created_x_tweet = client_v2.create_tweet(**payload)
         x_tweet_id_str = created_x_tweet.data.get('id')
 
-        # 6. DBのステータス更新
+        # DBのステータス更新
         update_payload = { "status": "posted", "posted_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), "x_tweet_id": x_tweet_id_str, "error_message": None }
         supabase.table('tweets').update(update_payload).eq('id', tweet_id).execute()
         
@@ -2064,10 +2122,11 @@ def post_tweet_now_api(tweet_id):
 
     except Exception as e:
         print(f"!!! Post tweet now exception: {e}"); traceback.print_exc()
-        error_message = str(e.args[0]) if e.args else str(e)
+        # エラーメッセージをDBに保存
+        error_message = str(e.args[0]) if hasattr(e, 'args') and e.args else str(e)
         supabase.table('tweets').update({"status": "error", "error_message": error_message}).eq('id', tweet_id).execute()
+        # フロントエンドにエラーを返す
         return jsonify({"error": "Failed to post tweet", "details": error_message}), 500
-
 
 # 『心理』の資料内容を別の変数として定義
 PSYCHOLOGY_TECHNIQUES = {
@@ -3321,6 +3380,346 @@ def handle_inspirations():
         return jsonify({"status": "ok"}), 200
 
     return jsonify({"error": "Method not allowed"}), 405
+
+# ==============================================================================
+#  インタラクティブ・ツイートアシスタント API
+#  リライト、リプライ、引用リツイートのAI生成を統合的に扱うエンドポイント
+# ==============================================================================
+
+# --- 定数定義 (このセクション用) ---
+INTERACTIVE_QC_MAX_REVISIONS = 5  # ループ回数
+INTERACTIVE_QC_PASSING_SCORE = 90 # 合格点
+
+
+@app.route('/api/v1/tweets/generate-interactive', methods=['POST', 'OPTIONS'], strict_slashes=False)
+@token_required
+def generate_interactive_tweet_endpoint():
+    """APIリクエストを処理し、インタラクティブツイート生成のメインロジックを呼び出す"""
+    
+    print("\n" + "="*80)
+    print("--- [API_LOG] START: /generate-interactive process ---")
+    print("="*80)
+
+    try:
+        data = request.json
+        print(f"--- [API_LOG] 1. Received request data:\n{json.dumps(data, indent=2, ensure_ascii=False)}")
+        
+        # --- 1. リクエストの必須項目を検証 ---
+        x_account_id = data.get('x_account_id')
+        mode = data.get('mode')
+        direction = data.get('direction')
+
+        if not all([x_account_id, mode, direction]):
+            return jsonify({"error": "x_account_id, mode, direction are required."}), 400
+        if mode not in ['rewrite', 'reply', 'quote']:
+            return jsonify({"error": "Invalid mode. Must be 'rewrite', 'reply', or 'quote'."}), 400
+        
+        user_text = data.get('user_text', '')
+        original_tweet_id = data.get('original_tweet_id', '')
+
+        if mode == 'rewrite' and not user_text:
+            return jsonify({"error": "user_text is required for rewrite mode."}), 400
+        if mode in ['reply', 'quote'] and not original_tweet_id:
+            return jsonify({"error": "original_tweet_id is required for reply/quote mode."}), 400
+
+        # --- 2. データベースや外部APIから必要な情報を取得 ---
+        user_id = g.user.id
+        
+        account_strategy_res = supabase.table('account_strategies').select('*').eq('x_account_id', x_account_id).eq('user_id', user_id).maybe_single().execute()
+        if not account_strategy_res.data:
+            return jsonify({"error": f"Account strategy not found for x_account_id: {x_account_id}"}), 404
+        account_strategy = account_strategy_res.data
+
+        original_tweet_text = ""
+        if mode in ['reply', 'quote']:
+            try:
+                original_tweet_text = fetch_tweet_text_from_x_api(original_tweet_id, x_account_id, user_id)
+            except Exception as e_fetch:
+                return jsonify({"error": "Failed to fetch original tweet content from X API.", "details": str(e_fetch)}), 503 # Service Unavailable
+
+        # --- 3. メインのQCループを実行 ---
+        final_tweet, grounding_info = execute_interactive_qc_loop(
+            mode=mode,
+            direction=direction,
+            keywords=data.get('keywords', ''),
+            user_text=user_text,
+            original_tweet_text=original_tweet_text,
+            account_strategy=account_strategy,
+            model_id=g.profile.get('preferred_ai_model', 'gemini-1.5-flash-latest')
+        )
+
+        # --- 4. 成功レスポンスを返す ---
+        print("--- [API_LOG] END: /generate-interactive process (SUCCESS) ---")
+        return jsonify({"generated_tweet": final_tweet, "grounding_info": grounding_info}), 200
+
+    except Exception as e:
+        # --- 5. エラーハンドリング ---
+        error_message = "An unexpected error occurred during interactive tweet generation."
+        print(f"!!! [API_LOG] CRITICAL EXCEPTION in /generate-interactive: {e}")
+        traceback.print_exc()
+        print("--- [API_LOG] END: /generate-interactive process (with error) ---")
+        return jsonify({"error": error_message, "details": str(e)}), 500
+
+
+# --- 以下、上記エンドポイントが使用するヘルパー関数群 ---
+
+def execute_interactive_qc_loop(mode, direction, keywords, user_text, original_tweet_text, account_strategy, model_id):
+    """自己改善QCループを実行するメインロジック"""
+    global client
+    
+    print("\n" + "="*80)
+    print(f"--- [AGENT_LOG] START: Interactive QC Loop (Mode: {mode.upper()}) ---")
+    print("="*80)
+    
+    print("\n--- [AGENT_LOG] Phase 1: Generating the first draft...")
+    initial_prompt = build_interactive_initial_prompt(mode, direction, keywords, user_text, original_tweet_text, account_strategy)
+    
+    use_search = mode == 'quote' and direction in ['要約＆学びの提示', '敬意ある反対意見', '賛成と意見補強']
+    
+    generation_config = genai_types.GenerateContentConfig(temperature=0.8)
+    tools = [genai_types.Tool(google_search=genai_types.GoogleSearch())] if use_search else None
+    
+    initial_response = client.models.generate_content(model=model_id, contents=initial_prompt, config=generation_config, tools=tools)
+    current_tweet_draft = initial_response.text.strip()
+    
+    grounding_info_to_return = []
+    if use_search and initial_response.candidates and hasattr(initial_response.candidates[0], 'grounding_metadata'):
+        g_meta = initial_response.candidates[0].grounding_metadata
+        if hasattr(g_meta, 'citations') and g_meta.citations:
+            grounding_info_to_return = [{"uri": getattr(c, 'uri', None), "title": getattr(c, 'title', None)} for c in g_meta.citations]
+
+    best_tweet = current_tweet_draft
+    best_score = 0
+    original_context_for_revision = user_text if mode == 'rewrite' else original_tweet_text
+
+    for i in range(INTERACTIVE_QC_MAX_REVISIONS):
+        print(f"\n--- [AGENT_LOG] QC Loop - Iteration {i+1}/{INTERACTIVE_QC_MAX_REVISIONS} ---")
+        print(f"--- [AGENT_LOG]   - Current Draft to be evaluated:\n'''\n{current_tweet_draft}\n'''")
+        
+        print("\n--- [AGENT_LOG]   Phase 5: Quality Check, Scoring...")
+        qc_prompt = build_interactive_qc_prompt(mode, direction, current_tweet_draft, original_tweet_text, account_strategy)
+        
+        qc_response = client.models.generate_content(model=model_id, contents=qc_prompt)
+        
+        try:
+            json_match = re.search(r'\{.*\}', qc_response.text, re.DOTALL)
+            if not json_match: raise json.JSONDecodeError("No JSON object found in QC response.", qc_response.text, 0)
+            json_string = json_match.group(0)
+            qc_result = json.loads(json_string)
+            current_score = qc_result.get("score", 0)
+            feedback = qc_result.get("feedback", "")
+        except Exception as e:
+            print(f"!!! [AGENT_LOG] QC Loop failed to parse AI response: {e}. Raw: '{qc_response.text}'. Breaking loop."); break
+        
+        print(f"--- [AGENT_LOG]   - QC Score: {current_score} / {INTERACTIVE_QC_PASSING_SCORE}")
+        print(f"--- [AGENT_LOG]   - QC Feedback:\n'''\n{feedback}\n'''")
+
+        if current_score > best_score:
+            best_score = current_score
+            best_tweet = current_tweet_draft
+        
+        if current_score >= INTERACTIVE_QC_PASSING_SCORE:
+            print(f"--- [AGENT_LOG]   - QC Passed! Final score: {current_score}. Exiting loop.")
+            break
+        
+        if i < INTERACTIVE_QC_MAX_REVISIONS - 1:
+            current_tweet_draft = interactive_revise_draft_based_on_feedback(
+                model_id, current_tweet_draft, feedback, original_context_for_revision, account_strategy
+            )
+        else:
+            print("--- [AGENT_LOG] Max revisions reached. Outputting the best tweet so far.")
+            
+    final_tweet = best_tweet
+    
+    print("\n" + "="*80)
+    print("--- [AGENT_LOG] END: Interactive QC Loop (SUCCESS) ---")
+    print(f"--- [AGENT_LOG] Final Tweet to be returned:\n'''\n{final_tweet}\n'''")
+    print("="*80 + "\n")
+
+    return final_tweet, grounding_info_to_return
+
+
+def fetch_tweet_text_from_x_api(tweet_id: str, x_account_id: str, user_id: str) -> str:
+    """
+    指定されたツイートIDの情報をX API v2から取得する。
+    暗号化された認証情報をDBから取得・復号して使用する。
+    """
+    print(f"--- [HELPER_LOG] Fetching tweet text for ID: {tweet_id} using x_account_id: {x_account_id}")
+    try:
+        res = supabase.table('x_accounts').select('api_key_encrypted, api_key_secret_encrypted, access_token_encrypted, access_token_secret_encrypted').eq('id', x_account_id).eq('user_id', user_id).maybe_single().execute()
+        if not res.data:
+            raise Exception("X Account credentials not found or access denied.")
+        
+        creds = res.data
+        
+        api_key = EncryptionManager.decrypt(creds['api_key_encrypted'])
+        api_key_secret = EncryptionManager.decrypt(creds['api_key_secret_encrypted'])
+        access_token = EncryptionManager.decrypt(creds['access_token_encrypted'])
+        access_token_secret = EncryptionManager.decrypt(creds['access_token_secret_encrypted'])
+        
+        client_v2 = tweepy.Client(
+            consumer_key=api_key,
+            consumer_secret=api_key_secret,
+            access_token=access_token,
+            access_token_secret=access_token_secret
+        )
+        
+        response = client_v2.get_tweet(tweet_id, tweet_fields=["text", "author_id"])
+        
+        if response.data:
+            print(f"--- [HELPER_LOG] Successfully fetched tweet: '{response.data.text[:50]}...'")
+            return response.data.text
+        else:
+            error_details = response.errors if hasattr(response, 'errors') else "Unknown error from Tweepy"
+            print(f"!!! [HELPER_LOG] Failed to fetch tweet. Errors: {error_details}")
+            raise Exception(f"Tweet with ID {tweet_id} not found or API error.")
+
+    except Exception as e:
+        print(f"!!! [HELPER_LOG] Exception in fetch_tweet_text_from_x_api: {e}")
+        traceback.print_exc()
+        raise e
+
+
+def build_interactive_initial_prompt(mode, direction, keywords, user_text, original_tweet_text, account_strategy):
+    """
+    モードと指示に応じて、QCループの最初のプロンプトを動的に構築する。
+    """
+    persona_profile_for_ai = account_strategy.get('persona_profile_for_ai', '未設定')
+    
+    base_prompt = [
+        "あなたは、指定されたペルソナになりきる、プロのSNSライティングアシスタントです。",
+        "あなたの仕事は、ユーザーの目的達成をサポートするために、一貫性があり、エンゲージメントの高い文章を生成することです。\n"
+    ]
+
+    persona_section = [
+        "## あなたのペルソナ情報（矛盾を避けるための絶対的な制約）",
+        f"- アカウントの核となる目的: {account_strategy.get('account_purpose', '未設定')}",
+        f"- ペルソナ要約: {persona_profile_for_ai}",
+        f"- 声のトーン: {json.dumps(account_strategy.get('brand_voice_detail', {}), ensure_ascii=False)}",
+        f"- 提供する価値: {account_strategy.get('core_value_proposition', '未設定')}\n"
+    ]
+    
+    task_section = [f"## 実行タスク: {mode.upper()}"]
+    if mode == 'rewrite':
+        task_section.append("与えられたツイート原文を、より魅力的で効果的なものに書き換えてください。")
+        task_section.append(f"### 書き換える原文\n```\n{user_text}\n```")
+    elif mode == 'reply':
+        task_section.append("以下のツイートに対して、関係構築を目的としたリプライを作成してください。")
+        task_section.append(f"### リプライ対象のツイート\n```\n{original_tweet_text}\n```")
+    elif mode == 'quote':
+        task_section.append("以下のツイートを引用し、あなたのフォロワーに向けて価値あるコメントを加えてください。")
+        task_section.append(f"### 引用対象のツイート\n```\n{original_tweet_text}\n```")
+
+    direction_section = [
+        "\n## 生成の方向性",
+        f"- 指示された方向性: 【{direction}】",
+        f"- 含めるべきキーワード: {keywords if keywords else 'なし'}"
+    ]
+
+    output_instruction = [
+        "\n## 指示",
+        "以上のすべての情報を考慮し、ペルソナと矛盾せず、ユーザーの指示に沿ったツイート文を**1つだけ**生成してください。",
+        "生成する文章は140字以内で、魅力的かつ自然なものにしてください。",
+        "完成したツイート本文のみを出力してください。見出しや説明は不要です。"
+    ]
+
+    full_prompt = "\n".join(base_prompt + persona_section + task_section + direction_section + output_instruction)
+    return full_prompt
+
+def build_interactive_qc_prompt(mode, direction, current_draft, original_tweet_text, account_strategy):
+    """
+    モードに応じて、品質チェック(QC)用のプロンプトを動的に構築する。
+    """
+    persona_profile_for_ai = account_strategy.get('persona_profile_for_ai', '未設定')
+    base_prompt = [
+        "あなたは、結果を出すことにこだわる、超一流のコンテンツ編集長です。",
+        "ライターが提出したツイート案が、読者の心に響き、アカウントの価値を高めるかを厳しく評価してください。\n",
+        "## ★★★ 編集部の絶対憲法（グランドルール） ★★★",
+        "1. **【具体性こそ正義】:** 抽象論は罪。具体的なアクションや感情が伝わる言葉を選ぶこと。",
+        "2. **【140字の芸術】:** 冗長な表現を削ぎ落とし、一語一語に意味を持たせること。",
+        "3. **【一貫性】:** アカウントのペルソナや過去の発信と矛盾する内容は、信頼を破壊するため絶対に許されない。\n"
+    ]
+
+    evaluation_target = [
+        "## 評価対象ツイート（ライターからの提出物）",
+        f"```\n{current_draft}\n```\n"
+    ]
+
+    reference_info = [
+        "## 評価のための参考情報",
+        f"- 実行モード: {mode.upper()}",
+        f"- 指示された方向性: 【{direction}】",
+        f"- ペルソナ: {persona_profile_for_ai}",
+        f"- アカウントの目的: {account_strategy.get('account_purpose', '未設定')}",
+    ]
+    if mode in ['reply', 'quote']:
+        reference_info.append(f"- 元ツイート: ```\n{original_tweet_text}\n```")
+
+    scoring_criteria = ["\n## 【採点基準】"]
+    if mode == 'rewrite':
+        scoring_criteria.extend([
+            "- **改善度 (30点):** 指示された方向に、原文より明確に良くなっているか？",
+            "- **意図の維持 (25点):** 元のツイートが伝えたかった核心的な意図を損なっていないか？",
+            "- **ペルソナ一貫性 (20点):** アカウント戦略と矛盾していないか？",
+            "- **簡潔さと魅力 (15点):** 140字以内で、読者の興味を引くか？",
+            "- **指示の遵守 (10点):** 【{direction}】の指示に沿っているか？"
+        ])
+    elif mode == 'reply':
+        scoring_criteria.extend([
+            "- **対話促進度 (30点):** 相手が返信したくなるような、自然な会話の流れを作れているか？（質問、共感など）",
+            "- **敬意と好感度 (25点):** 相手を不快にさせない、丁寧で好感の持てる表現か？",
+            "- **ペルソナ一貫性 (20点)**",
+            "- **簡潔さ (15点)**",
+            "- **指示の遵守 (10点)**"
+        ])
+    elif mode == 'quote':
+        scoring_criteria.extend([
+            "- **付加価値 (30点):** 元ツイートにない独自の視点や有益な情報が加えられているか？",
+            "- **関連性と敬意 (25点):** 元ツイートの文脈を正しく理解し、敬意を払った上で論じているか？",
+            "- **ペルソナ一貫性 (20点)**",
+            "- **簡潔さと魅力 (15点)**",
+            "- **指示の遵守 (10点)**"
+        ])
+
+    output_format = [
+        "\n### 【出力形式】",
+        '```json', '{', f'  "score": <合計点数>,', f'  "feedback": "（もし{INTERACTIVE_QC_PASSING_SCORE}点未満なら具体的な改善点を記述。{INTERACTIVE_QC_PASSING_SCORE}点以上なら『合格』と記述）"', '}', '```'
+    ]
+    
+    full_prompt = "\n".join(base_prompt + evaluation_target + reference_info + scoring_criteria + output_format)
+    return full_prompt
+
+def interactive_revise_draft_based_on_feedback(model_id, current_draft, feedback, original_context, account_strategy):
+    """フィードバックを元にドラフトを修正するプロンプトを生成し、実行する"""
+    global client
+    print("\n--- [AGENT_LOG]   Phase 7: Revising the tweet based on feedback...")
+    
+    persona_profile_for_ai = account_strategy.get('persona_profile_for_ai', '')
+    todo_prompt = "\n".join([
+        "あなたは、編集長の意図を正確に汲み取り、ライターへの**「具体的で実行可能な作業指示」**に落とし込む、超優秀なデスク担当者です。",
+        f"\n## 編集長からのフィードバック\n```\n{feedback}\n```",
+        "\n## 指示\n編集長のフィードバックを元に、ライターが**次に何をすべきか**を、**極めて具体的な「修正指示ToDoリスト」**として箇条書きで出力してください。"
+    ])
+    todo_response = client.models.generate_content(model=model_id, contents=todo_prompt)
+    todo_list = todo_response.text.strip()
+    print(f"--- [AGENT_LOG]   - Generated ToDo List:\n'''\n{todo_list}\n'''")
+    
+    revise_prompt = "\n".join([
+        "あなたは、編集デスクからの**具体的な修正指示**に従って、既存のツイート案を改善するプロのライターです。",
+        f"\n## ★★★ あなたが修正すべき、現在のツイート案 ★★★\n```\n{current_draft}\n```",
+        f"\n## ★★★ あなたが従うべき、具体的な修正指示書（ToDoリスト） ★★★\n```\n{todo_list}\n```",
+        "\n## 参考情報",
+        f"- 元の文脈: {original_context}",
+        f"- ペルソナ: {persona_profile_for_ai}",
+        "\n## あなたのタスク",
+        "**【現在のツイート案】**に対して、**【具体的な修正指示書】**に書かれている修正を**すべて**適用してください。",
+        "完成したツイート本文のみを出力してください。"
+    ])
+    revise_generation_config = genai_types.GenerateContentConfig(temperature=0.7)
+    revise_response = client.models.generate_content(model=model_id, contents=revise_prompt, config=revise_generation_config)
+    revised_draft = revise_response.text.strip()
+    print(f"--- [AGENT_LOG]   - Revised Draft created.")
+    return revised_draft
 
 # Flaskサーバーの起動
 if __name__ == '__main__':

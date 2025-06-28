@@ -36,6 +36,11 @@ const Header = () => {
               <Link href="/dashboard" className="hover:text-gray-300">アカウント管理</Link>
               <Link href="/tweets" className="hover:text-gray-300">ツイート管理</Link>
               <Link href="/problems/generate" className="text-yellow-300 font-semibold hover:text-yellow-200">悩みリスト生成</Link>
+              
+              {/* ▼▼▼ ここに新しいリンクを追記 ▼▼▼ */}
+              <Link href="/assistant" className="text-yellow-300 font-semibold hover:text-yellow-200">AIアシスタント</Link>
+              {/* ▲▲▲ ここに新しいリンクを追記 ▲▲▲ */}
+
               <Link href="/initial-post-generator" className="hover:text-gray-300">初期投稿生成</Link>
               <Link href="/educational-tweets" className="hover:text-gray-300">教育ツイート</Link>
               <Link href="/launches" className="hover:text-gray-300">ローンチ管理</Link>
